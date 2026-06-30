@@ -19,7 +19,7 @@ from django.urls import include, path
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('api.urls')),
+    path('api/', include('jobs.urls')),
 ]
 
 # Add URL maps to redirect the base URL to our application
