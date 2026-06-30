@@ -1,2 +1,4 @@
 Django==4.2.30
-djangorestframework==<installed-version>
+djangorestframework==3.17.1
+psycopg[binary]>=3.2,<4
+celery[redis]>=5.3,<6
