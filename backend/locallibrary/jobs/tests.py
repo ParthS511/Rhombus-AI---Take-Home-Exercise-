@@ -1,7 +1,43 @@
 import json
 
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
+
+from .models import Job, Result
+
+
+class JobResultModelTests(TestCase):
+    def test_job_defaults_to_pending_with_zero_progress(self):
+        job = Job.objects.create(input_text="Order 123")
+
+        self.assertEqual(job.status, Job.Status.PENDING)
+        self.assertEqual(job.progress, 0)
+        self.assertEqual(str(job), f"Job {job.pk} (pending)")
+
+    def test_result_belongs_to_job(self):
+        job = Job.objects.create(
+            input_text="Order 123",
+            pattern=r"\d+",
+            replacement="#",
+        )
+        result = Result.objects.create(
+            job=job,
+            output_text="Order #",
+            matches=[{"match": "123", "start": 6, "end": 9}],
+            match_count=1,
+            metadata={"engine": "spark-local"},
+        )
+
+        self.assertEqual(job.result, result)
+        self.assertEqual(result.match_count, 1)
+        self.assertEqual(result.metadata["engine"], "spark-local")
+
+    def test_job_progress_must_be_between_zero_and_one_hundred(self):
+        job = Job(input_text="Order 123", progress=101)
+
+        with self.assertRaises(ValidationError):
+            job.full_clean()
 
 
 class RegexReplaceTests(TestCase):
