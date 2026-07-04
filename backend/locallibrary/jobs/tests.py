@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
 
+from .orchestration import RegexPatternError, run_regex_job
 from .models import Job, Result
 
 
@@ -38,6 +39,35 @@ class JobResultModelTests(TestCase):
 
         with self.assertRaises(ValidationError):
             job.full_clean()
+
+
+class RegexJobOrchestrationTests(TestCase):
+    def test_run_regex_job_marks_job_succeeded_and_saves_result(self):
+        job = Job.objects.create(
+            input_text="Order 123 and order 456",
+            pattern=r"\d+",
+            replacement="#",
+        )
+
+        payload = run_regex_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(job.status, Job.Status.SUCCEEDED)
+        self.assertEqual(job.progress, 100)
+        self.assertEqual(payload["result"], "Order # and order #")
+        self.assertEqual(job.result.output_text, "Order # and order #")
+        self.assertEqual(job.result.match_count, 2)
+        self.assertEqual(job.result.metadata["engine"], "python-re")
+
+    def test_run_regex_job_marks_job_failed_for_invalid_pattern(self):
+        job = Job.objects.create(input_text="abc", pattern="[", replacement="x")
+
+        with self.assertRaises(RegexPatternError):
+            run_regex_job(job.id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.FAILED)
+        self.assertIn("Invalid regex pattern", job.error_message)
 
 
 class RegexReplaceTests(TestCase):
