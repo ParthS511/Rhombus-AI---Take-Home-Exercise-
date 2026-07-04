@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
@@ -131,3 +132,41 @@ class RegexReplaceTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("text", response.json()["error"])
+
+
+class JobCreateApiTests(TestCase):
+    @patch("jobs.api.views.process_regex_job.delay")
+    def test_create_job_persists_job_and_dispatches_task(self, mock_delay):
+        mock_delay.return_value.id = "celery-task-123"
+
+        response = self.client.post(
+            reverse("job-create"),
+            data=json.dumps(
+                {
+                    "input_text": "Order 123",
+                    "pattern": r"\d+",
+                    "replacement": "#",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = Job.objects.get()
+        mock_delay.assert_called_once_with(job.id)
+        self.assertEqual(job.status, Job.Status.PENDING)
+        self.assertEqual(job.task_id, "celery-task-123")
+        self.assertEqual(response.json()["id"], job.id)
+        self.assertEqual(response.json()["task_id"], "celery-task-123")
+
+    @patch("jobs.api.views.process_regex_job.delay")
+    def test_create_job_rejects_invalid_payload_before_dispatch(self, mock_delay):
+        response = self.client.post(
+            reverse("job-create"),
+            data=json.dumps({"replacement": "#"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Job.objects.count(), 0)
+        mock_delay.assert_not_called()

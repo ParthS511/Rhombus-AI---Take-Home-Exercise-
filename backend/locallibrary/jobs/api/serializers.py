@@ -14,6 +14,22 @@ class RegexReplacementSerializer(serializers.Serializer):
         return value
 
 
+class JobCreateSerializer(serializers.Serializer):
+    input_text = serializers.CharField()
+    pattern = serializers.CharField()
+    replacement = serializers.CharField(required=False, allow_blank=True, default="")
+    natural_language_prompt = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+
+    def validate_pattern(self, value):
+        if value == "":
+            raise serializers.ValidationError("Pattern must be a non-empty string.")
+        return value
+
+
 class ResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = Result
