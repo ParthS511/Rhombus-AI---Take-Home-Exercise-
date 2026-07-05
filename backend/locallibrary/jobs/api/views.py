@@ -60,6 +60,83 @@ def generate_regex(request):
 @csrf_exempt
 @require_POST
 def create_job(request):
+    # Support both JSON and multipart/form-data uploads
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    # multipart upload path (file + form fields)
+    if request.FILES:
+        uploaded = request.FILES.get("file")
+        nl_prompt = request.POST.get("nl_prompt") or request.POST.get("natural_language_prompt", "")
+        pattern = request.POST.get("pattern", "")
+        replacement = request.POST.get("replacement", "")
+        target_columns = request.POST.get("target_columns", "")
+        engine = request.POST.get("engine", "spark")
+
+        # If no explicit pattern provided but NL prompt exists, generate regex
+        if not pattern and nl_prompt:
+            try:
+                regex_payload = generate_regex_from_prompt(nl_prompt)
+                pattern = regex_payload.get("pattern", "")
+            except Exception:
+                pattern = ""
+
+        # Create job with a short preview of the uploaded file as input_text
+        try:
+            # read a small sample from the uploaded file for preview
+            uploaded.open()
+            sample_bytes = uploaded.read(4096)
+            try:
+                sample_text = sample_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                sample_text = str(sample_bytes)
+        finally:
+            try:
+                uploaded.close()
+            except Exception:
+                pass
+
+        job = data.create_job(
+            input_text=sample_text,
+            pattern=pattern,
+            replacement=replacement,
+            natural_language_prompt=nl_prompt,
+            uploaded_file="",
+            target_columns=target_columns,
+        )
+
+        # save uploaded file to MEDIA_ROOT/uploads/job_<id>/
+        from django.conf import settings
+        import os
+
+        upload_dir = os.path.join(settings.MEDIA_ROOT, "uploads", f"job_{job.id}")
+        os.makedirs(upload_dir, exist_ok=True)
+        filename = uploaded.name
+        dest_path = os.path.join(upload_dir, filename)
+        with open(dest_path, "wb") as dst:
+            uploaded.open("rb")
+            for chunk in uploaded.chunks():
+                dst.write(chunk)
+            uploaded.close()
+
+        # store file path on job
+        Job = None
+        try:
+            from jobs.models import Job as JobModel
+            JobModel.objects.filter(id=job.id).update(uploaded_file=dest_path)
+        except Exception:
+            # fallback: update via data layer if available
+            data.get_job(job.id).uploaded_file = dest_path
+            data.get_job(job.id).save(update_fields=["uploaded_file"])
+
+        # dispatch task (use spark engine by default for file uploads)
+        task = process_spark_regex_job if engine == "spark" else process_regex_job
+        async_result = task.delay(job.id)
+        data.set_task_id(job.id, async_result.id)
+        job.refresh_from_db()
+        return JsonResponse(JobSerializer(job).data, status=202)
+
+    # JSON path (original behavior)
     try:
         payload = json.loads(request.body or "{}")
     except json.JSONDecodeError:
