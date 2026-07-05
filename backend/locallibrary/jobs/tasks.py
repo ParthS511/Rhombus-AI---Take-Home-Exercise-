@@ -12,3 +12,9 @@ def ping():
 def process_regex_job(self, job_id):
     data.set_task_id(job_id, self.request.id)
     return orchestration.run_regex_job(job_id)
+
+
+@shared_task(bind=True)
+def process_spark_regex_job(self, job_id):
+    data.set_task_id(job_id, self.request.id)
+    return orchestration.run_spark_regex_job(job_id)

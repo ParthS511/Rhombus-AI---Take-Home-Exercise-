@@ -14,7 +14,13 @@ class RegexReplacementSerializer(serializers.Serializer):
         return value
 
 
+class RegexGenerationSerializer(serializers.Serializer):
+    prompt = serializers.CharField()
+
+
 class JobCreateSerializer(serializers.Serializer):
+    ENGINE_CHOICES = ["python", "spark"]
+
     input_text = serializers.CharField()
     pattern = serializers.CharField()
     replacement = serializers.CharField(required=False, allow_blank=True, default="")
@@ -22,6 +28,12 @@ class JobCreateSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         default="",
+    )
+    engine = serializers.ChoiceField(
+        choices=ENGINE_CHOICES,
+        required=False,
+        default="python",
+        write_only=True,
     )
 
     def validate_pattern(self, value):
