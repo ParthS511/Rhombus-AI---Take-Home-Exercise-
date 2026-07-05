@@ -1,1 +1,7 @@
 Django==4.2.30
+djangorestframework==3.17.1
+psycopg[binary]>=3.2,<4
+celery[redis]>=5.3,<6
+openai>=1.0,<3
+pyspark==3.5.3
+gunicorn>=22,<24
