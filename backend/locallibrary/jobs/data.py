@@ -7,12 +7,16 @@ def create_job(
     pattern="",
     replacement="",
     natural_language_prompt="",
+    uploaded_file="",
+    target_columns="",
 ):
     return Job.objects.create(
         input_text=input_text,
         pattern=pattern,
         replacement=replacement,
         natural_language_prompt=natural_language_prompt,
+        uploaded_file=uploaded_file,
+        target_columns=target_columns,
     )
 
 
