@@ -105,3 +105,74 @@ def _format_serializer_errors(errors):
         joined_errors = " ".join(str(error) for error in field_errors)
         messages.append(f"{field}: {joined_errors}")
     return " ".join(messages)
+
+
+@require_GET
+def job_detail(request, job_id):
+    try:
+        job = data.get_job(job_id)
+    except Exception:
+        return JsonResponse({"error": "Job not found"}, status=404)
+
+    return JsonResponse(JobSerializer(job).data)
+
+
+@require_GET
+def job_result(request, job_id):
+    """Return a paginated view of the job result.
+
+    For simple stored `Result.output_text`, this endpoint splits the output
+    into lines and returns rows of a single `output_text` column. If the
+    result metadata contains a `storage_path` or more structured data, that
+    can be extended later to stream/parquet-read partitions.
+    """
+    try:
+        job = data.get_job(job_id)
+    except Exception:
+        return JsonResponse({"error": "Job not found"}, status=404)
+
+    if not hasattr(job, "result") or job.result is None:
+        return JsonResponse({"rows": [], "columns": [], "total_pages": 0, "page": 1})
+
+    output_text = job.result.output_text or ""
+    # Basic row extraction: split into lines. For tabular/CSV results this
+    # should be replaced with structured parsing or reading stored files.
+    if "\n" in output_text:
+        lines = output_text.splitlines()
+    elif output_text == "":
+        lines = []
+    else:
+        lines = [output_text]
+
+    try:
+        page = int(request.GET.get("page", 1))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.GET.get("page_size", 50))
+    except ValueError:
+        page_size = 50
+
+    if page_size <= 0:
+        page_size = 50
+
+    total = len(lines)
+    import math
+
+    total_pages = math.ceil(total / page_size) if total else 0
+    if total_pages == 0:
+        return JsonResponse({"rows": [], "columns": [], "total_pages": 0, "page": page})
+
+    if page < 1:
+        page = 1
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_lines = lines[start:end]
+
+    rows = [{"output_text": l} for l in page_lines]
+    columns = ["output_text"]
+
+    return JsonResponse({"rows": rows, "columns": columns, "total_pages": total_pages, "page": page})
