@@ -8,7 +8,7 @@ Django API for regex find/replace, async Celery jobs, Spark processing, and LLM-
 - **worker** — Celery worker (Redis broker/backend)
 - **postgres** — job persistence
 - **redis** — Celery broker + result backend
-- **spark + spark-worker** — standalone Spark cluster for Spark engine jobs
+- **PySpark runtime** — available inside the app/worker image for Spark engine jobs
 
 ## Local development with Docker
 
@@ -23,7 +23,6 @@ Services:
 | Service | URL |
 |---------|-----|
 | API | http://localhost:8000/api/ |
-| Spark UI | http://localhost:8080/ |
 | Postgres | localhost:5432 |
 | Redis | localhost:6379 |
 
@@ -55,7 +54,7 @@ docker compose logs -f worker
 # Celery ping (returns pong when worker is healthy)
 curl -X POST http://localhost:8000/api/tasks/ping/
 
-# LLM regex (fallback without OPENAI_API_KEY)
+# LLM regex (uses Groq when GROQ_API_KEY is set; otherwise fallback)
 curl -X POST http://localhost:8000/api/llm/regex/ \
   -H "Content-Type: application/json" \
   -d '{"prompt":"replace email addresses"}'
@@ -66,16 +65,47 @@ curl -X POST http://localhost:8000/api/jobs/ \
   -d '{"input_text":"Order 123","pattern":"\\d+","replacement":"#","engine":"spark"}'
 ```
 
-Optional: set `OPENAI_API_KEY` in `docker-compose.yml` under `web` / `worker` to use the real LLM instead of fallback patterns.
+Optional: set `GROQ_API_KEY` in your environment to use Groq instead of fallback patterns. You can also set `GROQ_MODEL`; it defaults to `llama-3.1-8b-instant`.
+
+## Backend Behavior
+
+- `POST /api/jobs/` creates a persisted queued job and immediately returns `202` with a job ID.
+- `GET /api/jobs/<id>/` polls status, progress, task ID, error message, and result metadata.
+- `GET /api/jobs/<id>/result/` returns processed output as paginated rows.
+- `POST /api/jobs/<id>/cancel/` best-effort cancels queued/running work by revoking the Celery task and marking the job `canceled`.
+- Jobs use statuses `pending`, `running`, `succeeded`, `failed`, and `canceled`; `pending` is the queue state.
+
+## Celery, Redis, And Caching
+
+Celery uses Redis as both broker and result backend:
+
+```text
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/1
+```
+
+The LLM regex layer also uses Redis as a cache in Docker/Render:
+
+```text
+REDIS_CACHE_URL=redis://redis:6379/2
+```
+
+LLM regex outputs are cached by normalized prompt plus model, so repeated natural-language prompts reuse the previous regex instead of calling Groq again. Celery tasks update job progress in the database, use Celery `PROGRESS` state updates at task start, and retry transient failures up to three times with exponential backoff. Invalid or unsafe regex patterns fail fast without retry.
+
+## Spark Processing
+
+CSV uploads are saved by the web process and processed asynchronously by Celery. Spark reads the uploaded CSV with header/schema inference, applies `regexp_replace` as a column transformation over the selected target columns, writes the full result to Parquet under `MEDIA_ROOT/results/job_<id>/`, and stores only a small CSV preview for browser pagination.
+
+The Spark path uses DataFrame transformations instead of pandas row loops. In local Docker it runs with `local[*]`, allowing Spark to parallelize work across available cores and input partitions; on a real cluster the same DataFrame transformation can scale horizontally by changing the Spark master/deployment configuration. The current implementation supports CSV files; Excel upload parsing is not implemented.
 
 ## Deploy skeleton (Render)
 
-The repo includes `render.yaml` for a hosted skeleton (web + Celery worker + Postgres + Redis). Spark runs locally via Docker Compose only.
+The repo includes `render.yaml` for a hosted skeleton (web service with an embedded Celery worker + Postgres + Redis). Spark runs in local mode through the PySpark runtime included in the Docker image.
 
 1. Push this repo to GitHub.
 2. In [Render](https://render.com), create a **Blueprint** from the repo.
-3. Set `OPENAI_API_KEY` in the Render dashboard (optional).
-4. Deploy — Render runs migrations and starts gunicorn on the web service.
+3. Set `GROQ_API_KEY` in the Render dashboard (optional, but required for real LLM use).
+4. Deploy — Render runs `render-start.sh`, which applies migrations, starts Celery, and starts gunicorn on the web service.
 
 Health check: `GET /api/health/`
 
@@ -97,4 +127,4 @@ If `docker compose up` fails with blob / I/O errors:
 2. Open Docker Desktop → **Troubleshoot** → **Clean / Purge data** (or restart).
 3. Retry `docker compose up --build`.
 
-If Spark fails to start, confirm port `8080` and `7077` are free.
+If Spark fails to start, confirm Java is available in the image and check the worker logs.

@@ -1,12 +1,23 @@
 import json
 import os
+import sys
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
+from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.test import TestCase
 from django.urls import reverse
 
-from .orchestration import RegexPatternError, run_regex_job, run_spark_regex_job
+from .orchestration import (
+    RegexPatternError,
+    _apply_spark_regex_to_file,
+    run_regex_job,
+    run_spark_regex_job,
+)
 from .models import Job, Result
 
 
@@ -71,6 +82,53 @@ class RegexJobOrchestrationTests(TestCase):
         self.assertEqual(job.status, Job.Status.FAILED)
         self.assertIn("Invalid regex pattern", job.error_message)
 
+    def test_run_regex_job_rejects_unsafe_nested_quantifier_pattern(self):
+        job = Job.objects.create(input_text="aaaa", pattern=r"(a+)+$", replacement="x")
+
+        with self.assertRaises(RegexPatternError):
+            run_regex_job(job.id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.FAILED)
+        self.assertIn("nested quantifiers", job.error_message)
+
+    def test_run_regex_job_skips_canceled_job(self):
+        job = Job.objects.create(
+            input_text="Order 123",
+            pattern=r"\d+",
+            status=Job.Status.CANCELED,
+        )
+
+        payload = run_regex_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(payload, {"canceled": True})
+        self.assertEqual(job.status, Job.Status.CANCELED)
+        self.assertFalse(hasattr(job, "result"))
+
+    @patch("jobs.orchestration.generate_regex_from_prompt")
+    def test_run_regex_job_generates_pattern_from_prompt_in_worker(self, mock_generate):
+        mock_generate.return_value = {
+            "pattern": r"\d+",
+            "replacement": "#",
+            "explanation": "Match digit runs.",
+            "source": "fallback",
+        }
+        job = Job.objects.create(
+            input_text="Order 123",
+            natural_language_prompt="replace numbers",
+        )
+
+        payload = run_regex_job(job.id)
+        job.refresh_from_db()
+
+        mock_generate.assert_called_once_with("replace numbers")
+        self.assertEqual(job.status, Job.Status.SUCCEEDED)
+        self.assertEqual(job.pattern, r"\d+")
+        self.assertEqual(job.replacement, "#")
+        self.assertEqual(payload["result"], "Order #")
+        self.assertEqual(job.result.metadata["regex_source"], "fallback")
+
     @patch("jobs.orchestration._apply_spark_regex")
     def test_run_spark_regex_job_marks_job_succeeded_and_saves_result(self, mock_spark):
         mock_spark.return_value = "Order #"
@@ -92,6 +150,149 @@ class RegexJobOrchestrationTests(TestCase):
         self.assertEqual(payload["result"], "Order #")
         self.assertEqual(job.result.output_text, "Order #")
         self.assertEqual(job.result.metadata["engine"], "spark-local")
+
+    def test_spark_file_processing_falls_back_when_pandas_is_unavailable(self):
+        class FakeJob:
+            def __init__(self):
+                self.id = 42
+                self.status = "pending"
+                self.progress = 0
+                self.error_message = ""
+
+            def save(self, update_fields=None):
+                return None
+
+        class FakeDataFrame:
+            def __init__(self, rows, columns):
+                self._rows = rows
+                self.columns = columns
+                self.schema = SimpleNamespace(fields=[SimpleNamespace(name="name", dataType="StringType")])
+                self.write = SimpleNamespace(mode=lambda *args, **kwargs: SimpleNamespace(parquet=lambda *args, **kwargs: None))
+
+            def withColumn(self, name, expr):
+                return self
+
+            def limit(self, count):
+                return self
+
+            def toPandas(self):
+                raise ModuleNotFoundError("No module named 'pandas'")
+
+            def collect(self):
+                return self._rows
+
+            def count(self):
+                return len(self._rows)
+
+        class FakeBuilder:
+            def appName(self, *args, **kwargs):
+                return self
+
+            def master(self, *args, **kwargs):
+                return self
+
+            def config(self, *args, **kwargs):
+                return self
+
+            def getOrCreate(self):
+                return FakeSparkSession()
+
+        class FakeReader:
+            def option(self, *args, **kwargs):
+                return self
+
+            def csv(self, path):
+                return FakeDataFrame([{"name": "Ada"}], ["name"])
+
+        class FakeSparkSession:
+            builder = FakeBuilder()
+
+            def __init__(self):
+                self.read = FakeReader()
+
+            def stop(self):
+                return None
+
+        fake_sql_module = SimpleNamespace(SparkSession=FakeSparkSession)
+        fake_functions_module = SimpleNamespace(
+            col=lambda name: name,
+            regexp_replace=lambda value, pattern, replacement: value,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv") as source_file:
+            with patch.dict(
+                sys.modules,
+                {
+                    "pyspark.sql": fake_sql_module,
+                    "pyspark.sql.functions": fake_functions_module,
+                },
+            ):
+                output_path, sample_csv, rows_count, columns = _apply_spark_regex_to_file(
+                    file_path=source_file.name,
+                    pattern=r"\d+",
+                    replacement="#",
+                    target_columns="name",
+                    job=FakeJob(),
+                )
+
+        self.assertIn("job_42", output_path)
+        self.assertTrue(sample_csv.startswith("name"))
+        self.assertIn("Ada", sample_csv)
+        self.assertEqual(rows_count, 1)
+        self.assertEqual(columns, ["name"])
+
+    def test_spark_file_processing_rejects_missing_target_columns(self):
+        class FakeDataFrame:
+            columns = ["name"]
+            schema = SimpleNamespace(fields=[SimpleNamespace(name="name", dataType="StringType")])
+
+        class FakeBuilder:
+            def appName(self, *args, **kwargs):
+                return self
+
+            def master(self, *args, **kwargs):
+                return self
+
+            def getOrCreate(self):
+                return FakeSparkSession()
+
+        class FakeReader:
+            def option(self, *args, **kwargs):
+                return self
+
+            def csv(self, path):
+                return FakeDataFrame()
+
+        class FakeSparkSession:
+            builder = FakeBuilder()
+
+            def __init__(self):
+                self.read = FakeReader()
+
+            def stop(self):
+                return None
+
+        fake_sql_module = SimpleNamespace(SparkSession=FakeSparkSession)
+        fake_functions_module = SimpleNamespace(
+            col=lambda name: name,
+            regexp_replace=lambda value, pattern, replacement: value,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv") as source_file:
+            with patch.dict(
+                sys.modules,
+                {
+                    "pyspark.sql": fake_sql_module,
+                    "pyspark.sql.functions": fake_functions_module,
+                },
+            ):
+                with self.assertRaisesMessage(ValueError, "Target columns not found"):
+                    _apply_spark_regex_to_file(
+                        file_path=source_file.name,
+                        pattern=r"\d+",
+                        replacement="#",
+                        target_columns="missing",
+                    )
 
 
 class RegexReplaceTests(TestCase):
@@ -205,6 +406,27 @@ class JobCreateApiTests(TestCase):
         self.assertEqual(job.task_id, "spark-task-123")
 
     @patch("jobs.api.views.process_regex_job.delay")
+    def test_create_job_with_prompt_returns_immediately_without_generating_pattern(self, mock_delay):
+        mock_delay.return_value.id = "celery-task-123"
+
+        response = self.client.post(
+            reverse("job-create"),
+            data=json.dumps(
+                {
+                    "input_text": "Order 123",
+                    "natural_language_prompt": "replace numbers",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = Job.objects.get()
+        self.assertEqual(job.pattern, "")
+        self.assertEqual(job.replacement, "")
+        mock_delay.assert_called_once_with(job.id)
+
+    @patch("jobs.api.views.process_regex_job.delay")
     def test_create_job_rejects_invalid_payload_before_dispatch(self, mock_delay):
         response = self.client.post(
             reverse("job-create"),
@@ -215,6 +437,89 @@ class JobCreateApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Job.objects.count(), 0)
         mock_delay.assert_not_called()
+
+    @patch("jobs.api.views.process_spark_regex_job.delay")
+    def test_create_job_accepts_file_upload_and_dispatches_spark_task(self, mock_delay):
+        mock_delay.return_value.id = "spark-task-123"
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                upload = SimpleUploadedFile(
+                    "orders.csv",
+                    b"name,order\nAda,Order 123\n",
+                    content_type="text/csv",
+                )
+                response = self.client.post(
+                    reverse("job-create"),
+                    data={
+                        "file": upload,
+                        "pattern": r"\d+",
+                        "replacement": "#",
+                        "target_columns": "order",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 202)
+                job = Job.objects.get()
+                self.assertTrue(os.path.exists(job.uploaded_file))
+                self.assertEqual(job.target_columns, "order")
+                self.assertIn("Order 123", job.input_text)
+        mock_delay.assert_called_once_with(job.id)
+
+    @patch("jobs.api.views.process_spark_regex_job.delay")
+    def test_create_job_rejects_file_upload_without_pattern_or_prompt(self, mock_delay):
+        upload = SimpleUploadedFile("orders.csv", b"name\nAda\n", content_type="text/csv")
+
+        response = self.client.post(reverse("job-create"), data={"file": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Job.objects.count(), 0)
+        mock_delay.assert_not_called()
+
+
+class JobResultApiTests(TestCase):
+    def test_job_result_returns_paginated_csv_rows(self):
+        job = Job.objects.create(input_text="sample", pattern=r"\d+")
+        Result.objects.create(
+            job=job,
+            output_text="name,order\nAda,Order #\nGrace,Order #\n",
+            matches=[],
+            metadata={"engine": "spark-file"},
+        )
+
+        response = self.client.get(reverse("job-result", args=[job.id]), {"page_size": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "rows": [{"name": "Ada", "order": "Order #"}],
+                "columns": ["name", "order"],
+                "total_pages": 2,
+                "page": 1,
+            },
+        )
+
+
+class JobCancelApiTests(TestCase):
+    @patch("jobs.api.views.current_app.control.revoke")
+    def test_cancel_job_revokes_task_and_marks_job_canceled(self, mock_revoke):
+        job = Job.objects.create(
+            input_text="Order 123",
+            pattern=r"\d+",
+            task_id="celery-task-123",
+        )
+
+        response = self.client.post(reverse("job-cancel", args=[job.id]))
+
+        self.assertEqual(response.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.CANCELED)
+        mock_revoke.assert_called_once_with(
+            "celery-task-123",
+            terminate=True,
+            signal="SIGTERM",
+        )
 
 
 class TaskPingApiTests(TestCase):
@@ -235,7 +540,10 @@ class TaskPingApiTests(TestCase):
 
 
 class LlmRegexApiTests(TestCase):
-    @patch.dict(os.environ, {"OPENAI_API_KEY": ""})
+    def setUp(self):
+        cache.clear()
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": ""})
     def test_generate_regex_returns_forced_json_shape_without_api_key(self):
         response = self.client.post(
             reverse("llm-regex"),
@@ -251,3 +559,95 @@ class LlmRegexApiTests(TestCase):
         )
         self.assertEqual(payload["source"], "fallback")
         self.assertIn("EMAIL", payload["replacement"])
+
+    def test_generate_regex_can_use_groq_openai_compatible_client(self):
+        class FakeCompletions:
+            def create(self, **kwargs):
+                FakeOpenAI.create_kwargs = kwargs
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps(
+                                    {
+                                        "pattern": r"\d+",
+                                        "replacement": "#",
+                                        "explanation": "Match digit runs.",
+                                    }
+                                )
+                            )
+                        )
+                    ]
+                )
+
+        class FakeOpenAI:
+            init_kwargs = None
+            create_kwargs = None
+
+            def __init__(self, **kwargs):
+                FakeOpenAI.init_kwargs = kwargs
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        with patch.dict(
+            os.environ,
+            {
+                "GROQ_API_KEY": "test-groq-key",
+                "GROQ_MODEL": "test-groq-model",
+            },
+        ):
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                response = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace numbers"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source"], "groq")
+        self.assertEqual(FakeOpenAI.init_kwargs["api_key"], "test-groq-key")
+        self.assertEqual(FakeOpenAI.init_kwargs["base_url"], "https://api.groq.com/openai/v1")
+        self.assertEqual(FakeOpenAI.create_kwargs["model"], "test-groq-model")
+
+    def test_generate_regex_caches_groq_response_by_prompt(self):
+        class FakeCompletions:
+            call_count = 0
+
+            def create(self, **kwargs):
+                FakeCompletions.call_count += 1
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps(
+                                    {
+                                        "pattern": r"\d+",
+                                        "replacement": "#",
+                                        "explanation": "Match digit runs.",
+                                    }
+                                )
+                            )
+                        )
+                    ]
+                )
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-groq-key"}):
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                first = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace order numbers"}),
+                    content_type="application/json",
+                )
+                second = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace order numbers"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(FakeCompletions.call_count, 1)
+        self.assertTrue(second.json()["cached"])

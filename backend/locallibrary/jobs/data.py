@@ -7,12 +7,16 @@ def create_job(
     pattern="",
     replacement="",
     natural_language_prompt="",
+    uploaded_file="",
+    target_columns="",
 ):
     return Job.objects.create(
         input_text=input_text,
         pattern=pattern,
         replacement=replacement,
         natural_language_prompt=natural_language_prompt,
+        uploaded_file=uploaded_file,
+        target_columns=target_columns,
     )
 
 
@@ -43,6 +47,13 @@ def mark_succeeded(job):
 def mark_failed(job, error_message):
     job.status = Job.Status.FAILED
     job.error_message = str(error_message)
+    job.save(update_fields=["status", "error_message", "updated_at"])
+    return job
+
+
+def mark_canceled(job):
+    job.status = Job.Status.CANCELED
+    job.error_message = ""
     job.save(update_fields=["status", "error_message", "updated_at"])
     return job
 
