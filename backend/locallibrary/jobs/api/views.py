@@ -1,5 +1,8 @@
 import json
+import csv
+from io import StringIO
 
+from django.core.files.storage import default_storage
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -67,6 +70,9 @@ def create_job(request):
     # multipart upload path (file + form fields)
     if request.FILES:
         uploaded = request.FILES.get("file")
+        if uploaded is None:
+            return JsonResponse({"error": "file: This field is required."}, status=400)
+
         nl_prompt = request.POST.get("nl_prompt") or request.POST.get("natural_language_prompt", "")
         pattern = request.POST.get("pattern", "")
         replacement = request.POST.get("replacement", "")
@@ -81,6 +87,12 @@ def create_job(request):
             except Exception:
                 pattern = ""
 
+        if not pattern:
+            return JsonResponse(
+                {"error": "pattern: Provide a regex pattern or a natural language prompt."},
+                status=400,
+            )
+
         # Create job with a short preview of the uploaded file as input_text
         try:
             # read a small sample from the uploaded file for preview
@@ -91,43 +103,19 @@ def create_job(request):
             except Exception:
                 sample_text = str(sample_bytes)
         finally:
-            try:
-                uploaded.close()
-            except Exception:
-                pass
+            uploaded.seek(0)
 
         job = data.create_job(
             input_text=sample_text,
             pattern=pattern,
             replacement=replacement,
             natural_language_prompt=nl_prompt,
-            uploaded_file="",
             target_columns=target_columns,
         )
 
-        # save uploaded file to MEDIA_ROOT/uploads/job_<id>/
-        from django.conf import settings
-        import os
-
-        upload_dir = os.path.join(settings.MEDIA_ROOT, "uploads", f"job_{job.id}")
-        os.makedirs(upload_dir, exist_ok=True)
-        filename = uploaded.name
-        dest_path = os.path.join(upload_dir, filename)
-        with open(dest_path, "wb") as dst:
-            uploaded.open("rb")
-            for chunk in uploaded.chunks():
-                dst.write(chunk)
-            uploaded.close()
-
-        # store file path on job
-        Job = None
-        try:
-            from jobs.models import Job as JobModel
-            JobModel.objects.filter(id=job.id).update(uploaded_file=dest_path)
-        except Exception:
-            # fallback: update via data layer if available
-            data.get_job(job.id).uploaded_file = dest_path
-            data.get_job(job.id).save(update_fields=["uploaded_file"])
+        stored_name = default_storage.save(f"uploads/job_{job.id}/{uploaded.name}", uploaded)
+        job.uploaded_file = default_storage.path(stored_name)
+        job.save(update_fields=["uploaded_file", "updated_at"])
 
         # dispatch task (use spark engine by default for file uploads)
         task = process_spark_regex_job if engine == "spark" else process_regex_job
@@ -148,6 +136,15 @@ def create_job(request):
 
     validated_data = dict(serializer.validated_data)
     engine = validated_data.pop("engine")
+    if not validated_data.get("pattern") and validated_data.get("natural_language_prompt"):
+        try:
+            regex_payload = generate_regex_from_prompt(validated_data["natural_language_prompt"])
+            validated_data["pattern"] = regex_payload.get("pattern", "")
+            if not validated_data.get("replacement"):
+                validated_data["replacement"] = regex_payload.get("replacement", "")
+        except Exception as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+
     job = data.create_job(**validated_data)
     task = process_spark_regex_job if engine == "spark" else process_regex_job
     async_result = task.delay(job.id)
@@ -212,14 +209,7 @@ def job_result(request, job_id):
         return JsonResponse({"rows": [], "columns": [], "total_pages": 0, "page": 1})
 
     output_text = job.result.output_text or ""
-    # Basic row extraction: split into lines. For tabular/CSV results this
-    # should be replaced with structured parsing or reading stored files.
-    if "\n" in output_text:
-        lines = output_text.splitlines()
-    elif output_text == "":
-        lines = []
-    else:
-        lines = [output_text]
+    rows, columns = _rows_from_result_text(output_text)
 
     try:
         page = int(request.GET.get("page", 1))
@@ -233,7 +223,7 @@ def job_result(request, job_id):
     if page_size <= 0:
         page_size = 50
 
-    total = len(lines)
+    total = len(rows)
     import math
 
     total_pages = math.ceil(total / page_size) if total else 0
@@ -247,9 +237,25 @@ def job_result(request, job_id):
 
     start = (page - 1) * page_size
     end = start + page_size
-    page_lines = lines[start:end]
+    page_rows = rows[start:end]
 
-    rows = [{"output_text": l} for l in page_lines]
-    columns = ["output_text"]
+    return JsonResponse({"rows": page_rows, "columns": columns, "total_pages": total_pages, "page": page})
 
-    return JsonResponse({"rows": rows, "columns": columns, "total_pages": total_pages, "page": page})
+
+def _rows_from_result_text(output_text):
+    if not output_text:
+        return [], []
+
+    if "\n" in output_text:
+        try:
+            reader = csv.DictReader(StringIO(output_text))
+            rows = list(reader)
+            if reader.fieldnames and rows:
+                return rows, reader.fieldnames
+        except csv.Error:
+            pass
+        lines = output_text.splitlines()
+    else:
+        lines = [output_text]
+
+    return [{"output_text": line} for line in lines], ["output_text"]

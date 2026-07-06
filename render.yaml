@@ -11,8 +11,18 @@ services:
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
       - key: DJANGO_ALLOWED_HOSTS
         value: "*"
+      - key: DJANGO_SECURE_SSL_REDIRECT
+        value: "true"
+      - key: DJANGO_SESSION_COOKIE_SECURE
+        value: "true"
+      - key: DJANGO_CSRF_COOKIE_SECURE
+        value: "true"
+      - key: DJANGO_SECURE_HSTS_SECONDS
+        value: "31536000"
       - key: POSTGRES_DB
         fromDatabase:
           name: regex-db
@@ -57,8 +67,18 @@ services:
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
       - key: DJANGO_ALLOWED_HOSTS
         value: "*"
+      - key: DJANGO_SECURE_SSL_REDIRECT
+        value: "true"
+      - key: DJANGO_SESSION_COOKIE_SECURE
+        value: "true"
+      - key: DJANGO_CSRF_COOKIE_SECURE
+        value: "true"
+      - key: DJANGO_SECURE_HSTS_SECONDS
+        value: "31536000"
       - key: POSTGRES_DB
         fromDatabase:
           name: regex-db

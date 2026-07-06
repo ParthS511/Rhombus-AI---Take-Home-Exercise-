@@ -1,12 +1,22 @@
 import json
 import os
+import sys
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.test import TestCase
 from django.urls import reverse
 
-from .orchestration import RegexPatternError, run_regex_job, run_spark_regex_job
+from .orchestration import (
+    RegexPatternError,
+    _apply_spark_regex_to_file,
+    run_regex_job,
+    run_spark_regex_job,
+)
 from .models import Job, Result
 
 
@@ -92,6 +102,149 @@ class RegexJobOrchestrationTests(TestCase):
         self.assertEqual(payload["result"], "Order #")
         self.assertEqual(job.result.output_text, "Order #")
         self.assertEqual(job.result.metadata["engine"], "spark-local")
+
+    def test_spark_file_processing_falls_back_when_pandas_is_unavailable(self):
+        class FakeJob:
+            def __init__(self):
+                self.id = 42
+                self.status = "pending"
+                self.progress = 0
+                self.error_message = ""
+
+            def save(self, update_fields=None):
+                return None
+
+        class FakeDataFrame:
+            def __init__(self, rows, columns):
+                self._rows = rows
+                self.columns = columns
+                self.schema = SimpleNamespace(fields=[SimpleNamespace(name="name", dataType="StringType")])
+                self.write = SimpleNamespace(mode=lambda *args, **kwargs: SimpleNamespace(parquet=lambda *args, **kwargs: None))
+
+            def withColumn(self, name, expr):
+                return self
+
+            def limit(self, count):
+                return self
+
+            def toPandas(self):
+                raise ModuleNotFoundError("No module named 'pandas'")
+
+            def collect(self):
+                return self._rows
+
+            def count(self):
+                return len(self._rows)
+
+        class FakeBuilder:
+            def appName(self, *args, **kwargs):
+                return self
+
+            def master(self, *args, **kwargs):
+                return self
+
+            def config(self, *args, **kwargs):
+                return self
+
+            def getOrCreate(self):
+                return FakeSparkSession()
+
+        class FakeReader:
+            def option(self, *args, **kwargs):
+                return self
+
+            def csv(self, path):
+                return FakeDataFrame([{"name": "Ada"}], ["name"])
+
+        class FakeSparkSession:
+            builder = FakeBuilder()
+
+            def __init__(self):
+                self.read = FakeReader()
+
+            def stop(self):
+                return None
+
+        fake_sql_module = SimpleNamespace(SparkSession=FakeSparkSession)
+        fake_functions_module = SimpleNamespace(
+            col=lambda name: name,
+            regexp_replace=lambda value, pattern, replacement: value,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv") as source_file:
+            with patch.dict(
+                sys.modules,
+                {
+                    "pyspark.sql": fake_sql_module,
+                    "pyspark.sql.functions": fake_functions_module,
+                },
+            ):
+                output_path, sample_csv, rows_count, columns = _apply_spark_regex_to_file(
+                    file_path=source_file.name,
+                    pattern=r"\d+",
+                    replacement="#",
+                    target_columns="name",
+                    job=FakeJob(),
+                )
+
+        self.assertIn("job_42", output_path)
+        self.assertTrue(sample_csv.startswith("name"))
+        self.assertIn("Ada", sample_csv)
+        self.assertEqual(rows_count, 1)
+        self.assertEqual(columns, ["name"])
+
+    def test_spark_file_processing_rejects_missing_target_columns(self):
+        class FakeDataFrame:
+            columns = ["name"]
+            schema = SimpleNamespace(fields=[SimpleNamespace(name="name", dataType="StringType")])
+
+        class FakeBuilder:
+            def appName(self, *args, **kwargs):
+                return self
+
+            def master(self, *args, **kwargs):
+                return self
+
+            def getOrCreate(self):
+                return FakeSparkSession()
+
+        class FakeReader:
+            def option(self, *args, **kwargs):
+                return self
+
+            def csv(self, path):
+                return FakeDataFrame()
+
+        class FakeSparkSession:
+            builder = FakeBuilder()
+
+            def __init__(self):
+                self.read = FakeReader()
+
+            def stop(self):
+                return None
+
+        fake_sql_module = SimpleNamespace(SparkSession=FakeSparkSession)
+        fake_functions_module = SimpleNamespace(
+            col=lambda name: name,
+            regexp_replace=lambda value, pattern, replacement: value,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv") as source_file:
+            with patch.dict(
+                sys.modules,
+                {
+                    "pyspark.sql": fake_sql_module,
+                    "pyspark.sql.functions": fake_functions_module,
+                },
+            ):
+                with self.assertRaisesMessage(ValueError, "Target columns not found"):
+                    _apply_spark_regex_to_file(
+                        file_path=source_file.name,
+                        pattern=r"\d+",
+                        replacement="#",
+                        target_columns="missing",
+                    )
 
 
 class RegexReplaceTests(TestCase):
@@ -204,6 +357,34 @@ class JobCreateApiTests(TestCase):
         mock_delay.assert_called_once_with(job.id)
         self.assertEqual(job.task_id, "spark-task-123")
 
+    @patch("jobs.api.views.generate_regex_from_prompt")
+    @patch("jobs.api.views.process_regex_job.delay")
+    def test_create_job_can_generate_pattern_from_prompt(self, mock_delay, mock_generate):
+        mock_delay.return_value.id = "celery-task-123"
+        mock_generate.return_value = {
+            "pattern": r"\d+",
+            "replacement": "#",
+            "explanation": "digits",
+            "source": "fallback",
+        }
+
+        response = self.client.post(
+            reverse("job-create"),
+            data=json.dumps(
+                {
+                    "input_text": "Order 123",
+                    "natural_language_prompt": "replace numbers",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = Job.objects.get()
+        self.assertEqual(job.pattern, r"\d+")
+        self.assertEqual(job.replacement, "#")
+        mock_delay.assert_called_once_with(job.id)
+
     @patch("jobs.api.views.process_regex_job.delay")
     def test_create_job_rejects_invalid_payload_before_dispatch(self, mock_delay):
         response = self.client.post(
@@ -215,6 +396,68 @@ class JobCreateApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Job.objects.count(), 0)
         mock_delay.assert_not_called()
+
+    @patch("jobs.api.views.process_spark_regex_job.delay")
+    def test_create_job_accepts_file_upload_and_dispatches_spark_task(self, mock_delay):
+        mock_delay.return_value.id = "spark-task-123"
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                upload = SimpleUploadedFile(
+                    "orders.csv",
+                    b"name,order\nAda,Order 123\n",
+                    content_type="text/csv",
+                )
+                response = self.client.post(
+                    reverse("job-create"),
+                    data={
+                        "file": upload,
+                        "pattern": r"\d+",
+                        "replacement": "#",
+                        "target_columns": "order",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 202)
+                job = Job.objects.get()
+                self.assertTrue(os.path.exists(job.uploaded_file))
+                self.assertEqual(job.target_columns, "order")
+                self.assertIn("Order 123", job.input_text)
+        mock_delay.assert_called_once_with(job.id)
+
+    @patch("jobs.api.views.process_spark_regex_job.delay")
+    def test_create_job_rejects_file_upload_without_pattern_or_prompt(self, mock_delay):
+        upload = SimpleUploadedFile("orders.csv", b"name\nAda\n", content_type="text/csv")
+
+        response = self.client.post(reverse("job-create"), data={"file": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Job.objects.count(), 0)
+        mock_delay.assert_not_called()
+
+
+class JobResultApiTests(TestCase):
+    def test_job_result_returns_paginated_csv_rows(self):
+        job = Job.objects.create(input_text="sample", pattern=r"\d+")
+        Result.objects.create(
+            job=job,
+            output_text="name,order\nAda,Order #\nGrace,Order #\n",
+            matches=[],
+            metadata={"engine": "spark-file"},
+        )
+
+        response = self.client.get(reverse("job-result", args=[job.id]), {"page_size": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "rows": [{"name": "Ada", "order": "Order #"}],
+                "columns": ["name", "order"],
+                "total_pages": 2,
+                "page": 1,
+            },
+        )
 
 
 class TaskPingApiTests(TestCase):

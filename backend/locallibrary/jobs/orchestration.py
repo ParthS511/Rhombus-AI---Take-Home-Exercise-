@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 from . import data
 
@@ -136,6 +137,7 @@ def _build_spark_session():
 def _apply_spark_regex(*, text, pattern, replacement):
     from pyspark.sql.functions import col, regexp_replace
 
+    _validate_regex_pattern(pattern)
     spark = _build_spark_session()
     try:
         dataframe = spark.createDataFrame([(text,)], ["input_text"])
@@ -153,10 +155,17 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
 
     Returns (output_path, sample_csv, rows_count, columns)
     """
+    import csv
+    from io import StringIO
     from pyspark.sql.functions import col, regexp_replace
     from pyspark.sql import SparkSession
     import os
     from django.conf import settings
+
+    _validate_regex_pattern(pattern)
+    source_path = Path(file_path)
+    if not source_path.exists():
+        raise FileNotFoundError(f"Uploaded file does not exist: {file_path}")
 
     spark = SparkSession.builder.appName("nl-regex-file").master("local[*]").getOrCreate()
     try:
@@ -166,6 +175,12 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
         all_columns = df.columns
         if target_columns:
             cols = [c.strip() for c in target_columns.split(",") if c.strip()]
+            missing_columns = sorted(set(cols) - set(all_columns))
+            if missing_columns:
+                raise ValueError(
+                    "Target columns not found in uploaded file: "
+                    + ", ".join(missing_columns)
+                )
         else:
             # choose string columns heuristically
             cols = [f.name for f in df.schema.fields if str(f.dataType).lower().startswith("string")]
@@ -186,8 +201,17 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
         df.write.mode("overwrite").parquet(output_path)
 
         # sample first few rows for preview
-        sample_df = df.limit(50).toPandas()
-        sample_csv = sample_df.to_csv(index=False)
+        try:
+            sample_df = df.limit(50).toPandas()
+            sample_csv = sample_df.to_csv(index=False)
+        except ModuleNotFoundError:
+            sample_rows = df.limit(50).collect()
+            output = StringIO()
+            writer = csv.DictWriter(output, fieldnames=df.columns)
+            writer.writeheader()
+            for row in sample_rows:
+                writer.writerow({col_name: row[col_name] for col_name in df.columns})
+            sample_csv = output.getvalue()
         rows_count = df.count()
 
         # update job progress
@@ -197,3 +221,10 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
         return output_path, sample_csv, rows_count, df.columns
     finally:
         spark.stop()
+
+
+def _validate_regex_pattern(pattern):
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise RegexPatternError(f"Invalid regex pattern: {exc}") from exc
