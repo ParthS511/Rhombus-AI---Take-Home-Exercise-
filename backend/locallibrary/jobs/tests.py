@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.test import TestCase
@@ -80,6 +81,30 @@ class RegexJobOrchestrationTests(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.FAILED)
         self.assertIn("Invalid regex pattern", job.error_message)
+
+    def test_run_regex_job_rejects_unsafe_nested_quantifier_pattern(self):
+        job = Job.objects.create(input_text="aaaa", pattern=r"(a+)+$", replacement="x")
+
+        with self.assertRaises(RegexPatternError):
+            run_regex_job(job.id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.FAILED)
+        self.assertIn("nested quantifiers", job.error_message)
+
+    def test_run_regex_job_skips_canceled_job(self):
+        job = Job.objects.create(
+            input_text="Order 123",
+            pattern=r"\d+",
+            status=Job.Status.CANCELED,
+        )
+
+        payload = run_regex_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(payload, {"canceled": True})
+        self.assertEqual(job.status, Job.Status.CANCELED)
+        self.assertFalse(hasattr(job, "result"))
 
     @patch("jobs.orchestration.generate_regex_from_prompt")
     def test_run_regex_job_generates_pattern_from_prompt_in_worker(self, mock_generate):
@@ -476,6 +501,27 @@ class JobResultApiTests(TestCase):
         )
 
 
+class JobCancelApiTests(TestCase):
+    @patch("jobs.api.views.current_app.control.revoke")
+    def test_cancel_job_revokes_task_and_marks_job_canceled(self, mock_revoke):
+        job = Job.objects.create(
+            input_text="Order 123",
+            pattern=r"\d+",
+            task_id="celery-task-123",
+        )
+
+        response = self.client.post(reverse("job-cancel", args=[job.id]))
+
+        self.assertEqual(response.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.CANCELED)
+        mock_revoke.assert_called_once_with(
+            "celery-task-123",
+            terminate=True,
+            signal="SIGTERM",
+        )
+
+
 class TaskPingApiTests(TestCase):
     @patch("jobs.api.views.ping.delay")
     def test_ping_task_runs_through_celery_and_returns_result(self, mock_delay):
@@ -494,6 +540,9 @@ class TaskPingApiTests(TestCase):
 
 
 class LlmRegexApiTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
     @patch.dict(os.environ, {"GROQ_API_KEY": ""})
     def test_generate_regex_returns_forced_json_shape_without_api_key(self):
         response = self.client.post(
@@ -558,3 +607,47 @@ class LlmRegexApiTests(TestCase):
         self.assertEqual(FakeOpenAI.init_kwargs["api_key"], "test-groq-key")
         self.assertEqual(FakeOpenAI.init_kwargs["base_url"], "https://api.groq.com/openai/v1")
         self.assertEqual(FakeOpenAI.create_kwargs["model"], "test-groq-model")
+
+    def test_generate_regex_caches_groq_response_by_prompt(self):
+        class FakeCompletions:
+            call_count = 0
+
+            def create(self, **kwargs):
+                FakeCompletions.call_count += 1
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps(
+                                    {
+                                        "pattern": r"\d+",
+                                        "replacement": "#",
+                                        "explanation": "Match digit runs.",
+                                    }
+                                )
+                            )
+                        )
+                    ]
+                )
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-groq-key"}):
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                first = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace order numbers"}),
+                    content_type="application/json",
+                )
+                second = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace order numbers"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(FakeCompletions.call_count, 1)
+        self.assertTrue(second.json()["cached"])

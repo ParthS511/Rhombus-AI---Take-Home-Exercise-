@@ -51,6 +51,11 @@ services:
           type: redis
           name: regex-redis
           property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: regex-redis
+          property: connectionString
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL

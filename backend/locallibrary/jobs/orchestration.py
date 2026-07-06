@@ -3,6 +3,7 @@ from pathlib import Path
 
 from . import data
 from .llm import generate_regex_from_prompt
+from .regex_safety import UnsafeRegexError, validate_regex_safety
 
 
 class RegexPatternError(ValueError):
@@ -11,6 +12,7 @@ class RegexPatternError(ValueError):
 
 def apply_regex_replacement(*, text, pattern, replacement=""):
     try:
+        _validate_regex_pattern(pattern)
         compiled_pattern = re.compile(pattern)
     except re.error as exc:
         raise RegexPatternError(f"Invalid regex pattern: {exc}") from exc
@@ -34,6 +36,8 @@ def apply_regex_replacement(*, text, pattern, replacement=""):
 
 def run_regex_job(job_id, *, engine="python-re"):
     job = data.get_job(job_id)
+    if job.status == job.Status.CANCELED:
+        return {"canceled": True}
     data.mark_running(job)
 
     try:
@@ -59,6 +63,8 @@ def run_regex_job(job_id, *, engine="python-re"):
 
 def run_spark_regex_job(job_id):
     job = data.get_job(job_id)
+    if job.status == job.Status.CANCELED:
+        return {"canceled": True}
     data.mark_running(job, progress=15)
     try:
         regex_metadata = _ensure_job_regex(job)
@@ -229,8 +235,8 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
 
 def _validate_regex_pattern(pattern):
     try:
-        re.compile(pattern)
-    except re.error as exc:
+        validate_regex_safety(pattern)
+    except UnsafeRegexError as exc:
         raise RegexPatternError(f"Invalid regex pattern: {exc}") from exc
 
 

@@ -2,6 +2,7 @@ import json
 import csv
 from io import StringIO
 
+from celery import current_app
 from django.core.files.storage import default_storage
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -171,6 +172,23 @@ def job_detail(request, job_id):
     except Exception:
         return JsonResponse({"error": "Job not found"}, status=404)
 
+    return JsonResponse(JobSerializer(job).data)
+
+
+@csrf_exempt
+@require_POST
+def cancel_job(request, job_id):
+    try:
+        job = data.get_job(job_id)
+    except Exception:
+        return JsonResponse({"error": "Job not found"}, status=404)
+
+    if job.status in {job.Status.SUCCEEDED, job.Status.FAILED, job.Status.CANCELED}:
+        return JsonResponse(JobSerializer(job).data)
+
+    if job.task_id:
+        current_app.control.revoke(job.task_id, terminate=True, signal="SIGTERM")
+    data.mark_canceled(job)
     return JsonResponse(JobSerializer(job).data)
 
 

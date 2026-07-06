@@ -1,12 +1,26 @@
 import json
 import os
-import re
+from hashlib import sha256
+
+from django.core.cache import cache
+
+from .regex_safety import validate_regex_safety
+
+
+LLM_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7
 
 
 def generate_regex_from_prompt(prompt):
+    cache_key = _cache_key(prompt)
+    cached_payload = cache.get(cache_key)
+    if cached_payload is not None:
+        return {**cached_payload, "cached": True}
+
     config = _llm_config()
     if config is None:
-        return _fallback_regex(prompt)
+        payload = _fallback_regex(prompt)
+        cache.set(cache_key, payload, LLM_CACHE_TTL_SECONDS)
+        return payload
 
     # Groq exposes an OpenAI-compatible API, so we use the OpenAI SDK client
     # with Groq's base URL instead of adding a second provider-specific package.
@@ -35,7 +49,9 @@ def generate_regex_from_prompt(prompt):
         ],
     )
     payload = json.loads(response.choices[0].message.content)
-    return _normalize_regex_payload(payload, source=config["source"])
+    normalized_payload = _normalize_regex_payload(payload, source=config["source"])
+    cache.set(cache_key, normalized_payload, LLM_CACHE_TTL_SECONDS)
+    return normalized_payload
 
 
 def _llm_config():
@@ -84,10 +100,16 @@ def _normalize_regex_payload(payload, *, source):
     pattern = str(payload.get("pattern", ""))
     replacement = str(payload.get("replacement", ""))
     explanation = str(payload.get("explanation", ""))
-    re.compile(pattern)
+    validate_regex_safety(pattern)
     return {
         "pattern": pattern,
         "replacement": replacement,
         "explanation": explanation,
         "source": source,
     }
+
+
+def _cache_key(prompt):
+    model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    digest = sha256(f"{model}:{prompt.strip().lower()}".encode("utf-8")).hexdigest()
+    return f"llm_regex:{digest}"

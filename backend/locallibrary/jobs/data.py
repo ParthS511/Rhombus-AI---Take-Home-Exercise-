@@ -51,6 +51,13 @@ def mark_failed(job, error_message):
     return job
 
 
+def mark_canceled(job):
+    job.status = Job.Status.CANCELED
+    job.error_message = ""
+    job.save(update_fields=["status", "error_message", "updated_at"])
+    return job
+
+
 def save_result(*, job, output_text, matches, metadata=None):
     result, _ = Result.objects.update_or_create(
         job=job,

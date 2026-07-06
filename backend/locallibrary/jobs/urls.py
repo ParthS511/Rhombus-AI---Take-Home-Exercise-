@@ -6,6 +6,7 @@ urlpatterns = [
     path('health/', views.health_check, name='health-check'),
     path('jobs/', views.create_job, name='job-create'),
     path('jobs/<int:job_id>/', views.job_detail, name='job-detail'),
+    path('jobs/<int:job_id>/cancel/', views.cancel_job, name='job-cancel'),
     path('jobs/<int:job_id>/result/', views.job_result, name='job-result'),
     path('llm/regex/', views.generate_regex, name='llm-regex'),
     path('regex/', views.regex_replace, name='regex-replace'),
