@@ -81,6 +81,29 @@ class RegexJobOrchestrationTests(TestCase):
         self.assertEqual(job.status, Job.Status.FAILED)
         self.assertIn("Invalid regex pattern", job.error_message)
 
+    @patch("jobs.orchestration.generate_regex_from_prompt")
+    def test_run_regex_job_generates_pattern_from_prompt_in_worker(self, mock_generate):
+        mock_generate.return_value = {
+            "pattern": r"\d+",
+            "replacement": "#",
+            "explanation": "Match digit runs.",
+            "source": "fallback",
+        }
+        job = Job.objects.create(
+            input_text="Order 123",
+            natural_language_prompt="replace numbers",
+        )
+
+        payload = run_regex_job(job.id)
+        job.refresh_from_db()
+
+        mock_generate.assert_called_once_with("replace numbers")
+        self.assertEqual(job.status, Job.Status.SUCCEEDED)
+        self.assertEqual(job.pattern, r"\d+")
+        self.assertEqual(job.replacement, "#")
+        self.assertEqual(payload["result"], "Order #")
+        self.assertEqual(job.result.metadata["regex_source"], "fallback")
+
     @patch("jobs.orchestration._apply_spark_regex")
     def test_run_spark_regex_job_marks_job_succeeded_and_saves_result(self, mock_spark):
         mock_spark.return_value = "Order #"
@@ -357,16 +380,9 @@ class JobCreateApiTests(TestCase):
         mock_delay.assert_called_once_with(job.id)
         self.assertEqual(job.task_id, "spark-task-123")
 
-    @patch("jobs.api.views.generate_regex_from_prompt")
     @patch("jobs.api.views.process_regex_job.delay")
-    def test_create_job_can_generate_pattern_from_prompt(self, mock_delay, mock_generate):
+    def test_create_job_with_prompt_returns_immediately_without_generating_pattern(self, mock_delay):
         mock_delay.return_value.id = "celery-task-123"
-        mock_generate.return_value = {
-            "pattern": r"\d+",
-            "replacement": "#",
-            "explanation": "digits",
-            "source": "fallback",
-        }
 
         response = self.client.post(
             reverse("job-create"),
@@ -381,8 +397,8 @@ class JobCreateApiTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         job = Job.objects.get()
-        self.assertEqual(job.pattern, r"\d+")
-        self.assertEqual(job.replacement, "#")
+        self.assertEqual(job.pattern, "")
+        self.assertEqual(job.replacement, "")
         mock_delay.assert_called_once_with(job.id)
 
     @patch("jobs.api.views.process_regex_job.delay")
@@ -478,7 +494,7 @@ class TaskPingApiTests(TestCase):
 
 
 class LlmRegexApiTests(TestCase):
-    @patch.dict(os.environ, {"OPENAI_API_KEY": ""})
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "", "GROQ_API_KEY": "", "LLM_API_KEY": ""})
     def test_generate_regex_returns_forced_json_shape_without_api_key(self):
         response = self.client.post(
             reverse("llm-regex"),
@@ -494,3 +510,52 @@ class LlmRegexApiTests(TestCase):
         )
         self.assertEqual(payload["source"], "fallback")
         self.assertIn("EMAIL", payload["replacement"])
+
+    def test_generate_regex_can_use_groq_openai_compatible_client(self):
+        class FakeCompletions:
+            def create(self, **kwargs):
+                FakeOpenAI.create_kwargs = kwargs
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps(
+                                    {
+                                        "pattern": r"\d+",
+                                        "replacement": "#",
+                                        "explanation": "Match digit runs.",
+                                    }
+                                )
+                            )
+                        )
+                    ]
+                )
+
+        class FakeOpenAI:
+            init_kwargs = None
+            create_kwargs = None
+
+            def __init__(self, **kwargs):
+                FakeOpenAI.init_kwargs = kwargs
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "",
+                "GROQ_API_KEY": "test-groq-key",
+                "GROQ_MODEL": "test-groq-model",
+            },
+        ):
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                response = self.client.post(
+                    reverse("llm-regex"),
+                    data=json.dumps({"prompt": "replace numbers"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source"], "groq")
+        self.assertEqual(FakeOpenAI.init_kwargs["api_key"], "test-groq-key")
+        self.assertEqual(FakeOpenAI.init_kwargs["base_url"], "https://api.groq.com/openai/v1")
+        self.assertEqual(FakeOpenAI.create_kwargs["model"], "test-groq-model")

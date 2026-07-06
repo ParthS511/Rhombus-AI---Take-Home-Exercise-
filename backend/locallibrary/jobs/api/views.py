@@ -79,15 +79,7 @@ def create_job(request):
         target_columns = request.POST.get("target_columns", "")
         engine = request.POST.get("engine", "spark")
 
-        # If no explicit pattern provided but NL prompt exists, generate regex
-        if not pattern and nl_prompt:
-            try:
-                regex_payload = generate_regex_from_prompt(nl_prompt)
-                pattern = regex_payload.get("pattern", "")
-            except Exception:
-                pattern = ""
-
-        if not pattern:
+        if not pattern and not nl_prompt:
             return JsonResponse(
                 {"error": "pattern: Provide a regex pattern or a natural language prompt."},
                 status=400,
@@ -136,15 +128,6 @@ def create_job(request):
 
     validated_data = dict(serializer.validated_data)
     engine = validated_data.pop("engine")
-    if not validated_data.get("pattern") and validated_data.get("natural_language_prompt"):
-        try:
-            regex_payload = generate_regex_from_prompt(validated_data["natural_language_prompt"])
-            validated_data["pattern"] = regex_payload.get("pattern", "")
-            if not validated_data.get("replacement"):
-                validated_data["replacement"] = regex_payload.get("replacement", "")
-        except Exception as exc:
-            return JsonResponse({"error": str(exc)}, status=400)
-
     job = data.create_job(**validated_data)
     task = process_spark_regex_job if engine == "spark" else process_regex_job
     async_result = task.delay(job.id)

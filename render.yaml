@@ -5,8 +5,10 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     dockerCommand: >
-      sh -c "python manage.py migrate &&
-             gunicorn core.wsgi:application --bind 0.0.0.0:$PORT"
+      sh -c "set -e;
+             python manage.py migrate;
+             celery -A core worker --loglevel=info --concurrency=1 &
+             exec gunicorn core.wsgi:application --bind 0.0.0.0:$PORT"
     healthCheckPath: /api/health/
     envVars:
       - key: DJANGO_DEBUG
@@ -57,62 +59,10 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
-
-  - type: worker
-    name: regex-worker
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A core worker --loglevel=info
-    envVars:
-      - key: DJANGO_DEBUG
-        value: "false"
-      - key: DJANGO_SECRET_KEY
-        generateValue: true
-      - key: DJANGO_ALLOWED_HOSTS
-        value: "*"
-      - key: DJANGO_SECURE_SSL_REDIRECT
-        value: "true"
-      - key: DJANGO_SESSION_COOKIE_SECURE
-        value: "true"
-      - key: DJANGO_CSRF_COOKIE_SECURE
-        value: "true"
-      - key: DJANGO_SECURE_HSTS_SECONDS
-        value: "31536000"
-      - key: POSTGRES_DB
-        fromDatabase:
-          name: regex-db
-          property: database
-      - key: POSTGRES_USER
-        fromDatabase:
-          name: regex-db
-          property: user
-      - key: POSTGRES_PASSWORD
-        fromDatabase:
-          name: regex-db
-          property: password
-      - key: POSTGRES_HOST
-        fromDatabase:
-          name: regex-db
-          property: host
-      - key: POSTGRES_PORT
-        fromDatabase:
-          name: regex-db
-          property: port
-      - key: CELERY_BROKER_URL
-        fromService:
-          type: redis
-          name: regex-redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          type: redis
-          name: regex-redis
-          property: connectionString
-      - key: OPENAI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
-      - key: OPENAI_MODEL
-        value: gpt-4.1-mini
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
 
   - type: redis
     name: regex-redis

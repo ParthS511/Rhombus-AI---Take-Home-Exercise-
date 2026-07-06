@@ -4,14 +4,19 @@ import re
 
 
 def generate_regex_from_prompt(prompt):
-    if not os.getenv("OPENAI_API_KEY"):
+    config = _llm_config()
+    if config is None:
         return _fallback_regex(prompt)
 
     from openai import OpenAI
 
-    client = OpenAI()
+    client_kwargs = {"api_key": config["api_key"]}
+    if config["base_url"]:
+        client_kwargs["base_url"] = config["base_url"]
+
+    client = OpenAI(**client_kwargs)
     response = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=config["model"],
         response_format={"type": "json_object"},
         messages=[
             {
@@ -28,7 +33,38 @@ def generate_regex_from_prompt(prompt):
         ],
     )
     payload = json.loads(response.choices[0].message.content)
-    return _normalize_regex_payload(payload, source="openai")
+    return _normalize_regex_payload(payload, source=config["source"])
+
+
+def _llm_config():
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        return {
+            "api_key": openai_key,
+            "base_url": os.getenv("OPENAI_BASE_URL", "").strip(),
+            "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            "source": "openai",
+        }
+
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        return {
+            "api_key": groq_key,
+            "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            "model": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            "source": "groq",
+        }
+
+    generic_key = os.getenv("LLM_API_KEY", "").strip()
+    if generic_key:
+        return {
+            "api_key": generic_key,
+            "base_url": os.getenv("LLM_BASE_URL", "").strip(),
+            "model": os.getenv("LLM_MODEL", "gpt-4.1-mini"),
+            "source": os.getenv("LLM_SOURCE", "llm"),
+        }
+
+    return None
 
 
 def _fallback_regex(prompt):

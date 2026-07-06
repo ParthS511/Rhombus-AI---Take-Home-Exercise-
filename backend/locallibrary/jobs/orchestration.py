@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 from . import data
+from .llm import generate_regex_from_prompt
 
 
 class RegexPatternError(ValueError):
@@ -36,6 +37,7 @@ def run_regex_job(job_id, *, engine="python-re"):
     data.mark_running(job)
 
     try:
+        regex_metadata = _ensure_job_regex(job)
         payload = apply_regex_replacement(
             text=job.input_text,
             pattern=job.pattern,
@@ -49,7 +51,7 @@ def run_regex_job(job_id, *, engine="python-re"):
         job=job,
         output_text=payload["result"],
         matches=payload["matches"],
-        metadata={"engine": engine},
+        metadata={"engine": engine, **regex_metadata},
     )
     data.mark_succeeded(job)
     return payload
@@ -59,6 +61,7 @@ def run_spark_regex_job(job_id):
     job = data.get_job(job_id)
     data.mark_running(job, progress=15)
     try:
+        regex_metadata = _ensure_job_regex(job)
         # If the job was created from an uploaded file, process the file with Spark
         if getattr(job, "uploaded_file", ""):
             output_path, sample_csv, rows_processed, columns = _apply_spark_regex_to_file(
@@ -82,6 +85,7 @@ def run_spark_regex_job(job_id):
                 "storage_path": output_path,
                 "rows": rows_processed,
                 "columns": columns,
+                **regex_metadata,
             }
 
             # Save sample CSV into output_text for quick preview
@@ -108,7 +112,7 @@ def run_spark_regex_job(job_id):
                 job=job,
                 output_text=output_text,
                 matches=payload["matches"],
-                metadata={"engine": "spark-local"},
+                metadata={"engine": "spark-local", **regex_metadata},
             )
 
     except Exception as exc:
@@ -228,3 +232,22 @@ def _validate_regex_pattern(pattern):
         re.compile(pattern)
     except re.error as exc:
         raise RegexPatternError(f"Invalid regex pattern: {exc}") from exc
+
+
+def _ensure_job_regex(job):
+    if job.pattern:
+        return {}
+
+    if not job.natural_language_prompt:
+        raise RegexPatternError("A regex pattern or natural language prompt is required.")
+
+    regex_payload = generate_regex_from_prompt(job.natural_language_prompt)
+    job.pattern = regex_payload.get("pattern", "")
+    if not job.replacement:
+        job.replacement = regex_payload.get("replacement", "")
+    job.save(update_fields=["pattern", "replacement", "updated_at"])
+    _validate_regex_pattern(job.pattern)
+    return {
+        "regex_source": regex_payload.get("source", ""),
+        "regex_explanation": regex_payload.get("explanation", ""),
+    }
