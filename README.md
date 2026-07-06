@@ -75,7 +75,7 @@ The repo includes `render.yaml` for a hosted skeleton (web service with an embed
 1. Push this repo to GitHub.
 2. In [Render](https://render.com), create a **Blueprint** from the repo.
 3. Set `GROQ_API_KEY` in the Render dashboard (optional, but required for real LLM use).
-4. Deploy — Render runs migrations, starts Celery, and starts gunicorn on the web service.
+4. Deploy — Render runs `render-start.sh`, which applies migrations, starts Celery, and starts gunicorn on the web service.
 
 Health check: `GET /api/health/`
 
