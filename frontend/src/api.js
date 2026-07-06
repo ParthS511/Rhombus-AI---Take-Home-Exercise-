@@ -1,19 +1,59 @@
-const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8000')
+const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 
-export async function createJob(formData){
+async function parseResponse(res, fallbackMessage) {
+  const text = await res.text()
+  let data = {}
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    data = { error: text }
+  }
+  if (!res.ok) {
+    throw new Error(data.error || fallbackMessage)
+  }
+  return data
+}
+
+export async function createJob(formData) {
   const res = await fetch(`${API_BASE}/api/jobs/`, { method: 'POST', body: formData })
-  if(!res.ok) throw new Error('Failed to create job')
-  return res.json()
+  return parseResponse(res, 'Failed to create job')
 }
 
-export async function getJob(jobId){
+export async function getJob(jobId) {
   const res = await fetch(`${API_BASE}/api/jobs/${jobId}/`)
-  if(!res.ok) throw new Error('Failed to fetch job')
-  return res.json()
+  return parseResponse(res, 'Failed to fetch job')
 }
 
-export async function fetchResultPage(jobId,page=1,page_size=50){
-  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/result/?page=${page}&page_size=${page_size}`)
-  if(!res.ok) throw new Error('Failed to fetch result')
-  return res.json()
+export async function cancelJob(jobId) {
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/cancel/`, { method: 'POST' })
+  return parseResponse(res, 'Failed to cancel job')
+}
+
+export async function fetchResultPage(jobId, page = 1, pageSize = 50) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/result/?${params}`)
+  return parseResponse(res, 'Failed to fetch result')
+}
+
+export async function generateRegex(prompt) {
+  const res = await fetch(`${API_BASE}/api/llm/regex/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  })
+  return parseResponse(res, 'Failed to generate regex')
+}
+
+export async function regexReplace(payload) {
+  const res = await fetch(`${API_BASE}/api/regex/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return parseResponse(res, 'Failed to apply regex')
+}
+
+export async function healthCheck() {
+  const res = await fetch(`${API_BASE}/api/health/`)
+  return parseResponse(res, 'Backend is unavailable')
 }
