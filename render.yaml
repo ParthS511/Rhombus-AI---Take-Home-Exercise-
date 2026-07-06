@@ -55,10 +55,6 @@ services:
           type: redis
           name: regex-redis
           property: connectionString
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_MODEL
-        value: gpt-4.1-mini
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL

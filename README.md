@@ -55,7 +55,7 @@ docker compose logs -f worker
 # Celery ping (returns pong when worker is healthy)
 curl -X POST http://localhost:8000/api/tasks/ping/
 
-# LLM regex (fallback without OPENAI_API_KEY)
+# LLM regex (uses Groq when GROQ_API_KEY is set; otherwise fallback)
 curl -X POST http://localhost:8000/api/llm/regex/ \
   -H "Content-Type: application/json" \
   -d '{"prompt":"replace email addresses"}'
@@ -66,16 +66,16 @@ curl -X POST http://localhost:8000/api/jobs/ \
   -d '{"input_text":"Order 123","pattern":"\\d+","replacement":"#","engine":"spark"}'
 ```
 
-Optional: set `OPENAI_API_KEY` in `docker-compose.yml` under `web` / `worker` to use the real LLM instead of fallback patterns.
+Optional: set `GROQ_API_KEY` in your environment to use Groq instead of fallback patterns. You can also set `GROQ_MODEL`; it defaults to `llama-3.1-8b-instant`.
 
 ## Deploy skeleton (Render)
 
-The repo includes `render.yaml` for a hosted skeleton (web + Celery worker + Postgres + Redis). Spark runs locally via Docker Compose only.
+The repo includes `render.yaml` for a hosted skeleton (web service with an embedded Celery worker + Postgres + Redis). Spark runs locally via Docker Compose only.
 
 1. Push this repo to GitHub.
 2. In [Render](https://render.com), create a **Blueprint** from the repo.
-3. Set `OPENAI_API_KEY` in the Render dashboard (optional).
-4. Deploy — Render runs migrations and starts gunicorn on the web service.
+3. Set `GROQ_API_KEY` in the Render dashboard (optional, but required for real LLM use).
+4. Deploy — Render runs migrations, starts Celery, and starts gunicorn on the web service.
 
 Health check: `GET /api/health/`
 

@@ -8,6 +8,8 @@ def generate_regex_from_prompt(prompt):
     if config is None:
         return _fallback_regex(prompt)
 
+    # Groq exposes an OpenAI-compatible API, so we use the OpenAI SDK client
+    # with Groq's base URL instead of adding a second provider-specific package.
     from openai import OpenAI
 
     client_kwargs = {"api_key": config["api_key"]}
@@ -37,15 +39,6 @@ def generate_regex_from_prompt(prompt):
 
 
 def _llm_config():
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if openai_key:
-        return {
-            "api_key": openai_key,
-            "base_url": os.getenv("OPENAI_BASE_URL", "").strip(),
-            "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-            "source": "openai",
-        }
-
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
         return {
@@ -53,15 +46,6 @@ def _llm_config():
             "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
             "model": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
             "source": "groq",
-        }
-
-    generic_key = os.getenv("LLM_API_KEY", "").strip()
-    if generic_key:
-        return {
-            "api_key": generic_key,
-            "base_url": os.getenv("LLM_BASE_URL", "").strip(),
-            "model": os.getenv("LLM_MODEL", "gpt-4.1-mini"),
-            "source": os.getenv("LLM_SOURCE", "llm"),
         }
 
     return None

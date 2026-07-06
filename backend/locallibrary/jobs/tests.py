@@ -494,7 +494,7 @@ class TaskPingApiTests(TestCase):
 
 
 class LlmRegexApiTests(TestCase):
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "", "GROQ_API_KEY": "", "LLM_API_KEY": ""})
+    @patch.dict(os.environ, {"GROQ_API_KEY": ""})
     def test_generate_regex_returns_forced_json_shape_without_api_key(self):
         response = self.client.post(
             reverse("llm-regex"),
@@ -542,7 +542,6 @@ class LlmRegexApiTests(TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENAI_API_KEY": "",
                 "GROQ_API_KEY": "test-groq-key",
                 "GROQ_MODEL": "test-groq-model",
             },
