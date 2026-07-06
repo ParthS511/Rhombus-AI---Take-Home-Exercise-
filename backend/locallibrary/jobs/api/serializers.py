@@ -21,8 +21,8 @@ class RegexGenerationSerializer(serializers.Serializer):
 class JobCreateSerializer(serializers.Serializer):
     ENGINE_CHOICES = ["python", "spark"]
 
-    input_text = serializers.CharField()
-    pattern = serializers.CharField()
+    input_text = serializers.CharField(required=False, allow_blank=True, default="")
+    pattern = serializers.CharField(required=False, allow_blank=True, default="")
     replacement = serializers.CharField(required=False, allow_blank=True, default="")
     natural_language_prompt = serializers.CharField(
         required=False,
@@ -36,10 +36,14 @@ class JobCreateSerializer(serializers.Serializer):
         write_only=True,
     )
 
-    def validate_pattern(self, value):
-        if value == "":
-            raise serializers.ValidationError("Pattern must be a non-empty string.")
-        return value
+    def validate(self, attrs):
+        if not attrs.get("input_text"):
+            raise serializers.ValidationError({"input_text": "This field is required."})
+        if not attrs.get("pattern") and not attrs.get("natural_language_prompt"):
+            raise serializers.ValidationError(
+                {"pattern": "Provide a regex pattern or a natural language prompt."}
+            )
+        return attrs
 
 
 class ResultSerializer(serializers.ModelSerializer):
@@ -71,6 +75,8 @@ class JobSerializer(serializers.ModelSerializer):
             "natural_language_prompt",
             "pattern",
             "replacement",
+            "uploaded_file",
+            "target_columns",
             "task_id",
             "error_message",
             "result",

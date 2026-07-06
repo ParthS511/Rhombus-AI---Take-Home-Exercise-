@@ -24,6 +24,10 @@ class Job(models.Model):
     natural_language_prompt = models.TextField(blank=True)
     pattern = models.TextField(blank=True)
     replacement = models.TextField(blank=True)
+    # path to uploaded file (if job was created from a file upload)
+    uploaded_file = models.CharField(max_length=1024, blank=True)
+    # comma-separated list of target columns for file-based jobs
+    target_columns = models.TextField(blank=True)
     task_id = models.CharField(max_length=255, blank=True, db_index=True)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
