@@ -1,0 +1,178 @@
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.status-block {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+
+.status-hero {
+  align-items: baseline;
+  background:
+    radial-gradient(circle at 100% 20%, rgba(255, 90, 47, 0.22), transparent 35%),
+    var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  min-height: 86px;
+  padding: 16px;
+}
+
+.status-hero strong {
+  color: var(--accent);
+  font-size: 38px;
+  line-height: 1;
+}
+
+.status-hero span {
+  color: var(--soft);
+  font-size: 11px;
+  line-height: 1.35;
+  max-width: 120px;
+  text-align: right;
+}
+
+.status-hero.idle strong {
+  color: var(--text);
+}
+
+.progress-rail {
+  background: #202024;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.progress-rail div {
+  background: linear-gradient(90deg, var(--accent), var(--warning));
+  height: 100%;
+  transition: width 240ms ease;
+}
+
+.status-pill {
+  background: rgba(199, 255, 90, 0.08);
+  border: 1px solid rgba(199, 255, 90, 0.24);
+  border-radius: 999px;
+  color: var(--success);
+  font-size: 10.5px;
+  gap: 6px;
+  padding: 5px 9px;
+}
+
+.status-pill::before {
+  background: currentColor;
+  border-radius: 999px;
+  content: "";
+  display: block;
+  height: 5px;
+  width: 5px;
+}
+
+.status-pill.pending {
+  background: rgba(255, 200, 87, 0.1);
+  border-color: rgba(255, 200, 87, 0.26);
+  color: var(--warning);
+}
+
+.status-pill.running {
+  background: rgba(86, 214, 255, 0.1);
+  border-color: rgba(86, 214, 255, 0.24);
+  color: var(--info);
+}
+
+.status-pill.failed,
+.status-pill.canceled {
+  background: rgba(255, 109, 134, 0.12);
+  border-color: rgba(255, 109, 134, 0.28);
+  color: var(--danger);
+}
+
+.stats-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 10px;
+}
+
+.stats-grid div,
+.job-summary {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 9px;
+}
+
+.stats-grid span,
+.job-summary span {
+  color: var(--muted);
+  display: block;
+  font-size: 10px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.stats-grid strong {
+  color: var(--text);
+  display: block;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-grid div:first-child strong {
+  color: var(--accent);
+}
+
+.stats-grid div:last-child strong {
+  color: var(--info);
+}
+
+.job-summary {
+  margin-top: 10px;
+}
+
+.job-summary strong {
+  color: var(--text);
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.history-list {
+  display: grid;
+  gap: 7px;
+}
+
+.history-list button {
+  align-items: center;
+  background: var(--panel-raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 11px;
+}
+
+.history-list button span {
+  color: var(--accent);
+  font-weight: 850;
+}
+
+.history-list button strong {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.history-list button.active {
+  border-color: rgba(255, 90, 47, 0.5);
+}

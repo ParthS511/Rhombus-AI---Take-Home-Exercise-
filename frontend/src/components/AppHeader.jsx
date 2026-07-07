@@ -11,8 +11,8 @@ export default function AppHeader({ backendStatus }) {
       <div className="brand-lockup">
         <span className="brand-mark" aria-hidden="true" />
         <div>
-          <strong>lattice</strong>
-          <span className="brand-subtitle">natural-language regex processing</span>
+          <strong>Rhombus AI</strong>
+          <small>Regex replacement workspace</small>
         </div>
       </div>
 
