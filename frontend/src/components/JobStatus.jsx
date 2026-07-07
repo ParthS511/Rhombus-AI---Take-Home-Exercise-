@@ -9,19 +9,19 @@ export default function JobStatus({ job, onCancel }) {
     <div className="status-block">
       <div className="panel-title">
         <div>
-          <span className="section-kicker">{job ? `job_${String(job.id).padStart(4, '0')}` : 'job_idle'}</span>
-          <h2>Live progress</h2>
+          <span className="section-kicker">job monitor</span>
+          <h2>{job ? `Job #${job.id}` : 'Ready for upload'}</h2>
         </div>
         {job && <span className={`status-pill ${job.status}`}>{statusLabel(job.status)}</span>}
       </div>
       {job ? (
         <>
+          <div className="status-hero">
+            <strong>{progress}%</strong>
+            <span>{rowsProcessed.toLocaleString()} rows touched</span>
+          </div>
           <div className="progress-rail">
             <div style={{ width: `${progress}%` }} />
-          </div>
-          <div className="status-meta">
-            <span>{rowsProcessed.toLocaleString()} rows touched</span>
-            <span>{progress}% complete</span>
           </div>
           <div className="stats-grid">
             <div>
@@ -50,20 +50,20 @@ export default function JobStatus({ job, onCancel }) {
         </>
       ) : (
         <>
+          <div className="status-hero idle">
+            <strong>0%</strong>
+            <span>Upload a CSV to start an async Spark job.</span>
+          </div>
           <div className="progress-rail">
             <div style={{ width: '0%' }} />
           </div>
-          <div className="status-meta">
-            <span>waiting for dataset</span>
-            <span>0% complete</span>
-          </div>
           <div className="stats-grid">
             <div>
-              <span>partitions</span>
-              <strong>--</strong>
+              <span>engine</span>
+              <strong>Spark</strong>
             </div>
             <div>
-              <span>throughput</span>
+              <span>task</span>
               <strong>--</strong>
             </div>
             <div>

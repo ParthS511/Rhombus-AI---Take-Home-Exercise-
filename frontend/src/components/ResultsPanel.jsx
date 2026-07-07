@@ -43,6 +43,7 @@ export default function ResultsPanel({ job }) {
 
   const metadata = job?.result?.metadata || {}
   const hasRows = rows.length > 0
+  const replacementValue = job?.replacement ? String(job.replacement) : 'REDACTED'
 
   return (
     <section className="panel results-panel">
@@ -73,9 +74,10 @@ export default function ResultsPanel({ job }) {
                   <tr key={`${page}-${index}`}>
                     {columns.map((column) => {
                       const value = String(row[column] ?? '')
+                      const isReplacement = replacementValue && value === replacementValue
                       return (
                         <td key={column}>
-                          {value === 'REDACTED' ? <span className="redacted-pill">{value}</span> : value}
+                          {isReplacement ? <span className="replacement-pill">{value}</span> : value}
                         </td>
                       )
                     })}
@@ -115,7 +117,7 @@ export default function ResultsPanel({ job }) {
                 <tr key={name}>
                   <td>{index + 1}</td>
                   <td>{name}</td>
-                  <td><span className="redacted-pill">REDACTED</span></td>
+                  <td><span className="replacement-pill">REDACTED</span></td>
                 </tr>
               ))}
             </tbody>

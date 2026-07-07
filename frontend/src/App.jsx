@@ -5,7 +5,6 @@ import AppHeader from './components/AppHeader'
 import JobForm from './components/JobForm'
 import JobHistory from './components/JobHistory'
 import JobStatus from './components/JobStatus'
-import RegexSandbox from './components/RegexSandbox'
 import ResultsPanel from './components/ResultsPanel'
 import { TERMINAL_STATUSES } from './constants'
 import { parseCsvHeader } from './utils/csv'
@@ -17,7 +16,6 @@ export default function App() {
   const [selectedColumns, setSelectedColumns] = useState([])
   const [prompt, setPrompt] = useState('Find email addresses and replace them')
   const [replacement, setReplacement] = useState('REDACTED')
-  const [engine, setEngine] = useState('spark')
   const [job, setJob] = useState(null)
   const [jobs, setJobs] = useState([])
   const [submitting, setSubmitting] = useState(false)
@@ -112,7 +110,7 @@ export default function App() {
       formData.append('natural_language_prompt', prompt)
       formData.append('replacement', replacement)
       formData.append('target_columns', selectedColumnText)
-      formData.append('engine', engine)
+      formData.append('engine', 'spark')
 
       const createdJob = await createJob(formData)
       setJob(createdJob)
@@ -142,7 +140,6 @@ export default function App() {
       <section className="workspace">
         <JobForm
           columns={columns}
-          engine={engine}
           file={file}
           formError={formError}
           onFileChange={handleFileChange}
@@ -154,7 +151,6 @@ export default function App() {
           prompt={prompt}
           replacement={replacement}
           selectedColumns={selectedColumns}
-          setEngine={setEngine}
           setPrompt={setPrompt}
           setReplacement={setReplacement}
           setSelectedColumns={setSelectedColumns}
@@ -162,14 +158,12 @@ export default function App() {
         />
 
         <section className="panel status-panel">
-          <div className="command-label">$ job status</div>
           <JobStatus job={job} onCancel={handleCancel} />
           <JobHistory jobs={jobs} onSelect={setJob} activeId={job?.id} />
         </section>
       </section>
 
       <ResultsPanel job={job} />
-      <RegexSandbox />
     </main>
   )
 }

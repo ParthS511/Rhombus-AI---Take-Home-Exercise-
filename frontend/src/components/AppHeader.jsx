@@ -10,16 +10,14 @@ export default function AppHeader({ backendStatus }) {
     <header className="app-header">
       <div className="brand-lockup">
         <span className="brand-mark" aria-hidden="true" />
-        <strong>lattice</strong>
-        <nav className="top-tabs" aria-label="Primary">
-          <span className="active">new job</span>
-          <span>jobs</span>
-          <span>history</span>
-        </nav>
+        <div>
+          <strong>lattice</strong>
+          <span className="brand-subtitle">natural-language regex processing</span>
+        </div>
       </div>
 
       <div className="header-right">
-        <span className="worker-chip">worker pool: 4 active</span>
+        <span className="worker-chip">Celery + Redis + Spark</span>
         <div className={`health health-${backendStatus}`}>
           <span aria-hidden="true" />
           {label}

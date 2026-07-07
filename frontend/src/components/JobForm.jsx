@@ -4,7 +4,6 @@ import { splitColumns } from '../utils/csv'
 
 export default function JobForm({
   columns,
-  engine,
   file,
   formError,
   onFileChange,
@@ -16,7 +15,6 @@ export default function JobForm({
   prompt,
   replacement,
   selectedColumns,
-  setEngine,
   setPrompt,
   setReplacement,
   setSelectedColumns,
@@ -29,17 +27,10 @@ export default function JobForm({
     <form className="panel job-panel" onSubmit={onSubmit}>
       <div className="panel-title">
         <div>
-          <span className="section-kicker">configure</span>
+          <span className="section-kicker">upload and transform</span>
           <h2>Regex pipeline</h2>
         </div>
-        <div className="engine-toggle" aria-label="Processing engine">
-          <button type="button" className={engine === 'spark' ? 'active' : ''} onClick={() => setEngine('spark')}>
-            Spark
-          </button>
-          <button type="button" className={engine === 'python' ? 'active' : ''} onClick={() => setEngine('python')}>
-            Python
-          </button>
-        </div>
+        <span className="pipeline-chip">PySpark async</span>
       </div>
 
       <label className="file-drop">
