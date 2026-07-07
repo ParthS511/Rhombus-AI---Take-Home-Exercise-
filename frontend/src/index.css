@@ -89,6 +89,26 @@ h2 {
   overflow: hidden;
 }
 
+.boot-shell {
+  min-height: auto;
+}
+
+.boot-panel {
+  padding: 24px;
+}
+
+.boot-panel h1 {
+  color: var(--text);
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.boot-panel p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 0;
+}
+
 .app-header {
   align-items: center;
   background: var(--shell-top);
