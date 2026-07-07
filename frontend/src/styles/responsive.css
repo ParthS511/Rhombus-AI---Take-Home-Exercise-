@@ -1,0 +1,57 @@
+@media (max-width: 920px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .app-shell {
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  .app-header,
+  .header-right {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace {
+    padding: 14px;
+  }
+
+  .form-grid,
+  .actions,
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .results-panel {
+    margin: 0 14px 14px;
+  }
+
+  .regex-preview,
+  .status-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .status-hero span {
+    max-width: none;
+    text-align: left;
+  }
+
+  .regex-preview code {
+    max-width: 100%;
+  }
+
+  .pager {
+    justify-content: space-between;
+  }
+}
