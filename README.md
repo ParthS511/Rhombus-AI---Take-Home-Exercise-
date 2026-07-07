@@ -98,6 +98,26 @@ CSV uploads are saved by the web process and processed asynchronously by Celery.
 
 The Spark path uses DataFrame transformations instead of pandas row loops. In local Docker it runs with `local[*]`, allowing Spark to parallelize work across available cores and input partitions; on a real cluster the same DataFrame transformation can scale horizontally by changing the Spark master/deployment configuration. The current implementation supports CSV files; Excel upload parsing is not implemented.
 
+## Assessment Coverage
+
+Covered:
+
+- Django API, model persistence, job status/progress, result retrieval, and cancellation.
+- Celery worker execution with Redis broker/result backend.
+- Redis-backed LLM regex caching keyed by normalized prompt and model.
+- Natural-language regex generation through Groq when configured, with deterministic fallback patterns for local testing.
+- Regex validation/safety checks before execution.
+- PySpark CSV processing with DataFrame transformations over selected target columns.
+- Paginated frontend result viewing instead of returning full large outputs to the browser.
+- Docker Compose stack for Django, Celery, Postgres, Redis, and the Spark runtime.
+- Tests for API behavior, job orchestration, safety checks, and Spark file processing.
+
+Trade-offs:
+
+- CSV uploads are implemented end-to-end. Excel upload parsing is noted as future work because Spark needs an additional Excel reader package or a conversion step.
+- Progress is surfaced at key pipeline milestones. Per-partition row-level progress would require a more involved Spark progress listener.
+- The deployment skeleton is included, but a public URL and demo video should be added before final submission if required by the evaluator.
+
 ## Deploy skeleton (Render)
 
 The repo includes `render.yaml` for a hosted skeleton (web service with an embedded Celery worker + Postgres + Redis). Spark runs in local mode through the PySpark runtime included in the Docker image.
