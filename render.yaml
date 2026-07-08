@@ -81,12 +81,13 @@ services:
       - key: SPARK_WRITE_PARQUET
         value: "false"
 
-  - type: worker
+  - type: web
     name: regex-worker
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerCommand: sh render-worker-start.sh
+    healthCheckPath: /
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
