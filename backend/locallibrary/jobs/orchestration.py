@@ -135,12 +135,17 @@ def run_spark_regex_job(job_id):
 
 
 def _build_spark_session(app_name="nl-regex"):
+    os.environ.setdefault("SPARK_LOCAL_IP", os.getenv("SPARK_LOCAL_IP", "127.0.0.1"))
+    os.environ.setdefault("SPARK_LOCAL_HOSTNAME", os.getenv("SPARK_LOCAL_HOSTNAME", "localhost"))
+
     from pyspark.sql import SparkSession
 
     return (
         SparkSession.builder.appName(app_name)
         .master(os.getenv("SPARK_MASTER", "local[1]"))
         .config("spark.ui.enabled", "false")
+        .config("spark.driver.bindAddress", os.getenv("SPARK_DRIVER_BIND_ADDRESS", "127.0.0.1"))
+        .config("spark.driver.host", os.getenv("SPARK_DRIVER_HOST", "127.0.0.1"))
         .config("spark.driver.memory", os.getenv("SPARK_DRIVER_MEMORY", "512m"))
         .config("spark.executor.memory", os.getenv("SPARK_EXECUTOR_MEMORY", "512m"))
         .config("spark.sql.shuffle.partitions", os.getenv("SPARK_SQL_SHUFFLE_PARTITIONS", "1"))
@@ -169,8 +174,6 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
 
     Returns (output_path, sample_csv, rows_count, columns)
     """
-    import csv
-    from io import StringIO
     from pyspark.sql.functions import col, regexp_replace
     from django.conf import settings
 
@@ -208,26 +211,15 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
             if c in df.columns:
                 df = df.withColumn(c, regexp_replace(col(c), pattern, replacement))
 
-        # prepare output path
         output_dir = os.path.join(settings.MEDIA_ROOT, "results", f"job_{job.id}")
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, "data.parquet")
 
-        # write parquet
-        df.write.mode("overwrite").parquet(output_path)
+        if os.getenv("SPARK_WRITE_PARQUET", "true").lower() == "true":
+            df.write.mode("overwrite").parquet(output_path)
 
-        # sample first few rows for preview
-        try:
-            sample_df = df.limit(50).toPandas()
-            sample_csv = sample_df.to_csv(index=False)
-        except ModuleNotFoundError:
-            sample_rows = df.limit(50).collect()
-            output = StringIO()
-            writer = csv.DictWriter(output, fieldnames=df.columns)
-            writer.writeheader()
-            for row in sample_rows:
-                writer.writerow({col_name: row[col_name] for col_name in df.columns})
-            sample_csv = output.getvalue()
+        sample_rows = df.limit(50).collect()
+        sample_csv = _rows_to_csv(sample_rows, df.columns)
         rows_count = _estimate_csv_data_rows(source_path)
 
         # update job progress
@@ -246,6 +238,18 @@ def _estimate_csv_data_rows(source_path):
     except OSError:
         return 0
     return max(0, line_count - 1)
+
+
+def _rows_to_csv(rows, columns):
+    import csv
+    from io import StringIO
+
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({column: row[column] for column in columns})
+    return output.getvalue()
 
 
 def _validate_regex_pattern(pattern):

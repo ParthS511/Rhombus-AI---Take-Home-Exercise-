@@ -64,20 +64,29 @@ services:
         value: llama-3.1-8b-instant
       - key: SPARK_MASTER
         value: local[1]
+      - key: SPARK_LOCAL_IP
+        value: 127.0.0.1
+      - key: SPARK_LOCAL_HOSTNAME
+        value: localhost
+      - key: SPARK_DRIVER_BIND_ADDRESS
+        value: 127.0.0.1
+      - key: SPARK_DRIVER_HOST
+        value: 127.0.0.1
       - key: SPARK_DRIVER_MEMORY
         value: 512m
       - key: SPARK_EXECUTOR_MEMORY
         value: 512m
       - key: SPARK_SQL_SHUFFLE_PARTITIONS
         value: "1"
+      - key: SPARK_WRITE_PARQUET
+        value: "false"
 
-  - type: web
+  - type: worker
     name: regex-worker
     runtime: docker
-    plan: free
+    plan: starter
     dockerfilePath: ./Dockerfile
     dockerCommand: sh render-worker-start.sh
-    healthCheckPath: /
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
@@ -128,12 +137,22 @@ services:
         value: llama-3.1-8b-instant
       - key: SPARK_MASTER
         value: local[1]
+      - key: SPARK_LOCAL_IP
+        value: 127.0.0.1
+      - key: SPARK_LOCAL_HOSTNAME
+        value: localhost
+      - key: SPARK_DRIVER_BIND_ADDRESS
+        value: 127.0.0.1
+      - key: SPARK_DRIVER_HOST
+        value: 127.0.0.1
       - key: SPARK_DRIVER_MEMORY
         value: 512m
       - key: SPARK_EXECUTOR_MEMORY
         value: 512m
       - key: SPARK_SQL_SHUFFLE_PARTITIONS
         value: "1"
+      - key: SPARK_WRITE_PARQUET
+        value: "false"
 
   - type: redis
     name: regex-redis
