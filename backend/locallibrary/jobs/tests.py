@@ -338,6 +338,9 @@ class RegexJobOrchestrationTests(TestCase):
             def master(self, *args, **kwargs):
                 return self
 
+            def config(self, *args, **kwargs):
+                return self
+
             def getOrCreate(self):
                 return FakeSparkSession()
 
