@@ -86,20 +86,20 @@ def create_job(request):
                 status=400,
             )
 
-        # Create job with a short preview of the uploaded file as input_text
+        # Store the full CSV text so a separate worker can recreate the local
+        # Spark input file if Render's ephemeral filesystem is recycled.
         try:
-            # read a small sample from the uploaded file for preview
             uploaded.open()
-            sample_bytes = uploaded.read(4096)
+            file_bytes = uploaded.read()
             try:
-                sample_text = sample_bytes.decode("utf-8", errors="replace")
+                input_text = file_bytes.decode("utf-8", errors="replace")
             except Exception:
-                sample_text = str(sample_bytes)
+                input_text = str(file_bytes)
         finally:
             uploaded.seek(0)
 
         job = data.create_job(
-            input_text=sample_text,
+            input_text=input_text,
             pattern=pattern,
             replacement=replacement,
             natural_language_prompt=nl_prompt,

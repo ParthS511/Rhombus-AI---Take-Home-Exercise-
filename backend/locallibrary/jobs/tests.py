@@ -241,6 +241,91 @@ class RegexJobOrchestrationTests(TestCase):
         self.assertEqual(rows_count, 1)
         self.assertEqual(columns, ["name"])
 
+    def test_spark_file_processing_recreates_missing_upload_from_job_text(self):
+        class FakeJob:
+            id = 43
+            input_text = "name,order\nAda,Order 123\n"
+
+            def save(self, update_fields=None):
+                return None
+
+        class FakeDataFrame:
+            columns = ["name", "order"]
+            schema = SimpleNamespace(fields=[SimpleNamespace(name="order", dataType="StringType")])
+            write = SimpleNamespace(mode=lambda *args, **kwargs: SimpleNamespace(parquet=lambda *args, **kwargs: None))
+
+            def withColumn(self, name, expr):
+                return self
+
+            def limit(self, count):
+                return self
+
+            def toPandas(self):
+                raise ModuleNotFoundError("No module named 'pandas'")
+
+            def collect(self):
+                return [{"name": "Ada", "order": "Order #"}]
+
+            def count(self):
+                return 1
+
+        class FakeBuilder:
+            def appName(self, *args, **kwargs):
+                return self
+
+            def master(self, *args, **kwargs):
+                return self
+
+            def config(self, *args, **kwargs):
+                return self
+
+            def getOrCreate(self):
+                return FakeSparkSession()
+
+        class FakeReader:
+            def option(self, *args, **kwargs):
+                return self
+
+            def csv(self, path):
+                self.read_path = path
+                self.file_contents = open(path, encoding="utf-8").read()
+                return FakeDataFrame()
+
+        class FakeSparkSession:
+            builder = FakeBuilder()
+            reader = FakeReader()
+
+            def __init__(self):
+                self.read = self.reader
+
+            def stop(self):
+                return None
+
+        fake_sql_module = SimpleNamespace(SparkSession=FakeSparkSession)
+        fake_functions_module = SimpleNamespace(
+            col=lambda name: name,
+            regexp_replace=lambda value, pattern, replacement: value,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root:
+            missing_upload = os.path.join(media_root, "uploads", "job_43", "orders.csv")
+            with patch.dict(
+                sys.modules,
+                {
+                    "pyspark.sql": fake_sql_module,
+                    "pyspark.sql.functions": fake_functions_module,
+                },
+            ):
+                _apply_spark_regex_to_file(
+                    file_path=missing_upload,
+                    pattern=r"\d+",
+                    replacement="#",
+                    target_columns="order",
+                    job=FakeJob(),
+                )
+
+        self.assertIn("Order 123", FakeSparkSession.reader.file_contents)
+
     def test_spark_file_processing_rejects_missing_target_columns(self):
         class FakeDataFrame:
             columns = ["name"]

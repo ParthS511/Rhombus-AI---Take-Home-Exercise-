@@ -1,4 +1,5 @@
 import re
+import os
 from pathlib import Path
 
 from . import data
@@ -133,13 +134,16 @@ def run_spark_regex_job(job_id):
     }
 
 
-def _build_spark_session():
+def _build_spark_session(app_name="nl-regex"):
     from pyspark.sql import SparkSession
 
     return (
-        SparkSession.builder.appName("nl-regex")
-        .master("local[*]")
+        SparkSession.builder.appName(app_name)
+        .master(os.getenv("SPARK_MASTER", "local[1]"))
         .config("spark.ui.enabled", "false")
+        .config("spark.driver.memory", os.getenv("SPARK_DRIVER_MEMORY", "512m"))
+        .config("spark.executor.memory", os.getenv("SPARK_EXECUTOR_MEMORY", "512m"))
+        .config("spark.sql.shuffle.partitions", os.getenv("SPARK_SQL_SHUFFLE_PARTITIONS", "1"))
         .getOrCreate()
     )
 
@@ -168,16 +172,17 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
     import csv
     from io import StringIO
     from pyspark.sql.functions import col, regexp_replace
-    from pyspark.sql import SparkSession
-    import os
     from django.conf import settings
 
     _validate_regex_pattern(pattern)
     source_path = Path(file_path)
+    if not source_path.exists() and job and getattr(job, "input_text", ""):
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(job.input_text, encoding="utf-8")
     if not source_path.exists():
         raise FileNotFoundError(f"Uploaded file does not exist: {file_path}")
 
-    spark = SparkSession.builder.appName("nl-regex-file").master("local[*]").getOrCreate()
+    spark = _build_spark_session("nl-regex-file")
     try:
         # Only CSV is supported for now; attempt to read with header and infer schema
         df = spark.read.option("header", "true").option("inferSchema", "true").csv(file_path)
