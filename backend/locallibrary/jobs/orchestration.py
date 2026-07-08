@@ -184,8 +184,9 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
 
     spark = _build_spark_session("nl-regex-file")
     try:
-        # Only CSV is supported for now; attempt to read with header and infer schema
-        df = spark.read.option("header", "true").option("inferSchema", "true").csv(file_path)
+        # Only CSV is supported for now. Keep columns as strings to avoid an
+        # extra schema-inference scan before the actual Spark transformation.
+        df = spark.read.option("header", "true").csv(file_path)
 
         all_columns = df.columns
         if target_columns:
@@ -227,7 +228,7 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
             for row in sample_rows:
                 writer.writerow({col_name: row[col_name] for col_name in df.columns})
             sample_csv = output.getvalue()
-        rows_count = df.count()
+        rows_count = _estimate_csv_data_rows(source_path)
 
         # update job progress
         if job:
@@ -236,6 +237,15 @@ def _apply_spark_regex_to_file(*, file_path, pattern, replacement, target_column
         return output_path, sample_csv, rows_count, df.columns
     finally:
         spark.stop()
+
+
+def _estimate_csv_data_rows(source_path):
+    try:
+        with source_path.open(encoding="utf-8", errors="replace") as source_file:
+            line_count = sum(1 for line in source_file if line.strip())
+    except OSError:
+        return 0
+    return max(0, line_count - 1)
 
 
 def _validate_regex_pattern(pattern):

@@ -220,6 +220,8 @@ class RegexJobOrchestrationTests(TestCase):
         )
 
         with tempfile.NamedTemporaryFile(suffix=".csv") as source_file:
+            source_file.write(b"name\nAda\n")
+            source_file.flush()
             with patch.dict(
                 sys.modules,
                 {
