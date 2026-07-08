@@ -71,6 +71,70 @@ services:
       - key: SPARK_SQL_SHUFFLE_PARTITIONS
         value: "1"
 
+  - type: web
+    name: regex-worker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh render-worker-start.sh
+    healthCheckPath: /
+    envVars:
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "*"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: regex-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: regex-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: regex-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: regex-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: regex-db
+          property: port
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: regex-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: regex-redis
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: regex-redis
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: SPARK_MASTER
+        value: local[1]
+      - key: SPARK_DRIVER_MEMORY
+        value: 512m
+      - key: SPARK_EXECUTOR_MEMORY
+        value: 512m
+      - key: SPARK_SQL_SHUFFLE_PARTITIONS
+        value: "1"
+
   - type: redis
     name: regex-redis
     plan: free
