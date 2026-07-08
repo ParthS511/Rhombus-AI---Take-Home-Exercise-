@@ -6,7 +6,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerCommand: sh render-start.sh
     healthCheckPath: /api/health/
-    envVars: &app-env
+    envVars:
       - key: DJANGO_DEBUG
         value: "false"
       - key: DJANGO_SECRET_KEY
@@ -70,14 +70,6 @@ services:
         value: 512m
       - key: SPARK_SQL_SHUFFLE_PARTITIONS
         value: "1"
-
-  - type: worker
-    name: regex-worker
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A core worker --loglevel=info --concurrency=1
-    envVars: *app-env
 
   - type: redis
     name: regex-redis
